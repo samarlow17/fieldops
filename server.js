@@ -126,7 +126,10 @@ app.get('/api/contractors', requireAuth, requireAdmin, async (req,res)=>{
   try{
     const d = await gql(`query($b:[ID!]){ boards(ids:$b){ columns(ids:["${COL.contractor}"]){ settings_str } } }`, { b:[BOARD_ID] });
     const settings = JSON.parse(d.boards[0].columns[0].settings_str || '{}');
-    const labels = (settings.labels||[]).filter(l=>!l.is_deactivated).map(l=>({ id:l.id, label:l.label }));
+    const dead = new Set(settings.deactivated_labels || []);
+    const labels = (settings.labels||[])
+      .filter(l => !dead.has(l.id))
+      .map(l => ({ id: l.id, label: l.label || l.name }));  // live API uses `name`
     res.json(labels);
   }catch(e){ res.status(500).json({error:e.message}); }
 });
