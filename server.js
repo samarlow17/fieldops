@@ -39,7 +39,7 @@ const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm'
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
+  password: process.env.ADMIN_PASSWORD || 'Southend78781',
   name: 'Sam'
 };
 
