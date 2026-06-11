@@ -38,9 +38,9 @@ const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm'
 // A built-in admin that always works, so you can log in and approve people.
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
-  email: (process.env.ADMIN_EMAIL || 'admin@titerra.com').toLowerCase(),
+  email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
   password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
-  name: 'Office'
+  name: 'Sam'
 };
 
 /* ---------- login tokens (signed, no DB lookup per request) ---------- */
