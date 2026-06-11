@@ -334,7 +334,7 @@ function renderCalendar(){
   // contractor filter (admin)
   let filterHtml='';
   if(me.role==='admin'){
-    const names=[...new Set(sections.flatMap(s=>s.jobs).filter(j=>j.visit).map(j=>j.contractorLabel||'Unassigned'))].sort();
+    const names=allContractorNames();
     const label = !contractorSel ? 'All contractors' : (contractorSel.size===1?[...contractorSel][0]:contractorSel.size+' contractors');
     filterHtml=`<div class="filterwrap">
       <button class="filterbtn" id="filterBtn">👤 ${esc(label)} ▾</button>
@@ -383,8 +383,16 @@ function renderCalendar(){
 }
 function calMove(n){ calRef=new Date(calRef.getFullYear(),calRef.getMonth()+n,1); calSelDay=null; renderCalendar(); }
 function calToday(){ calRef=new Date(); calSelDay=null; renderCalendar(); }
+// Full contractor list (both boards' options + anyone on a job/event), sorted A–Z
+function allContractorNames(){
+  const fromBoards=Object.values(contractors).flat().map(c=>c.label);
+  const fromJobs=sections.flatMap(s=>s.jobs).filter(j=>j.visit).map(j=>j.contractorLabel||'Unassigned');
+  const fromEvents=manualEvents.map(e=>e.contractorLabel||'Unassigned');
+  return [...new Set([...fromBoards,...fromJobs,...fromEvents])].filter(Boolean)
+    .sort((a,b)=>a.localeCompare(b));
+}
 function toggleContractor(cb){
-  const names=[...new Set(sections.flatMap(s=>s.jobs).filter(j=>j.visit).map(j=>j.contractorLabel||'Unassigned'))];
+  const names=allContractorNames();
   if(!contractorSel) contractorSel=new Set(names);
   if(cb.checked) contractorSel.add(cb.value); else contractorSel.delete(cb.value);
   if(contractorSel.size===names.length) contractorSel=null; // all
@@ -413,7 +421,7 @@ function openDay(ds){
 function openAddEvent(){ openEventForm(null); }
 function openEditEvent(rawId){ openEventForm(manualEvents.find(x=>x.rawId===rawId)||null); }
 function openEventForm(ev){
-  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort();
+  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort((a,b)=>a.localeCompare(b));
   $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
   const date=ev&&ev.visit?ev.visit.split(' ')[0]:'';
   const time=ev&&ev.visit&&ev.visit.split(' ')[1]?ev.visit.split(' ')[1]:'';
@@ -483,7 +491,7 @@ async function openDetail(id, boardId){
 function findJob(id){ for(const s of sections){const j=s.jobs.find(x=>x.id===id); if(j)return j;} return null; }
 function renderDetail(j){
   const isAdmin=me.role==='admin';
-  const opts=(contractors[j.boardId]||[]);
+  const opts=(contractors[j.boardId]||[]).slice().sort((a,b)=>(a.label||'').localeCompare(b.label||''));
   const assign = isAdmin ? `
     <label>Assign contractor</label>
     <select id="d_contractor"><option value="">— Select —</option>
@@ -577,7 +585,7 @@ async function openUsers(){
   $('usersInner').innerHTML='<div class="loading"><span class="spin"></span> Loading users…</div>';
   $('usersSheet').classList.add('open');
   if(!Object.keys(contractors).length) await loadContractors();
-  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort();
+  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort((a,b)=>a.localeCompare(b));
   $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
   let users=[]; try{ const r=await fetch('/api/users',{headers:HEAD()}); users=r.ok?await r.json():[]; }catch(e){}
   renderUsers(users);
