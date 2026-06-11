@@ -42,7 +42,7 @@ const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm4
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
+  password: process.env.ADMIN_PASSWORD || 'Southend78781',
   name: 'Sam'
 };
 
