@@ -42,7 +42,7 @@ const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm4
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'Southend78781',
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
   name: 'Sam'
 };
 
@@ -101,6 +101,7 @@ async function updateBoardUser(id,fields){
   const vals={};
   if(fields.role!==undefined)       vals[UCOL.role]=fields.role;
   if(fields.contractor!==undefined) vals[UCOL.contractor]=fields.contractor;
+  if(fields.passHash!==undefined)   vals[UCOL.pass]=fields.passHash;
   await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
     { b:USER_BOARD_ID, i:id, v:JSON.stringify(vals) });
 }
@@ -215,6 +216,30 @@ app.post('/api/users/:id', requireAuth, requireAdmin, async (req,res)=>{
   }catch(err){ res.status(500).json({error:err.message}); }
 });
 
+// admin: reset someone's password
+app.post('/api/users/:id/password', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const { password } = req.body || {};
+    if(!password || String(password).length<6) return res.status(400).json({error:'Password must be at least 6 characters'});
+    await updateBoardUser(req.params.id, { passHash: bcrypt.hashSync(String(password),10) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+// anyone: change your own password
+app.post('/api/me/password', requireAuth, async (req,res)=>{
+  try{
+    const { currentPassword, newPassword } = req.body || {};
+    if(!newPassword || String(newPassword).length<6) return res.status(400).json({error:'New password must be at least 6 characters'});
+    if(req.me.email === BOOTSTRAP_ADMIN.email) return res.status(400).json({error:'The master admin password is set in the server file (server.js), not here.'});
+    const users = await getBoardUsers();
+    const u = users.find(x=>x.email===norm(req.me.email));
+    if(!u) return res.status(404).json({error:'Account not found'});
+    if(!u.hash || !bcrypt.compareSync(String(currentPassword||''), u.hash)) return res.status(401).json({error:'Your current password is wrong'});
+    await updateBoardUser(u.id, { passHash: bcrypt.hashSync(String(newPassword),10) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 // manual calendar entries
 app.get('/api/events', requireAuth, async (req,res)=>{
   try{
@@ -235,6 +260,21 @@ app.post('/api/events', requireAuth, requireAdmin, async (req,res)=>{
     };
     await gql(`mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v){ id } }`,
       { b:EVENT_BOARD_ID, n:String(title), v:JSON.stringify(vals) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.put('/api/events/:id', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const { title, date, time, contractor, notes } = req.body || {};
+    if(!title || !date) return res.status(400).json({error:'Title and date are required'});
+    const vals = {
+      name: String(title),
+      [ECOL.when]: { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') },
+      [ECOL.contractor]: contractor || '',
+      [ECOL.notes]: notes || ''
+    };
+    await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
+      { b:EVENT_BOARD_ID, i:req.params.id, v:JSON.stringify(vals) });
     res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });
@@ -301,6 +341,21 @@ app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
     if(date)         vals[COL.visit]        = { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') };
     await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
       { b:board.id, i:req.params.id, v:JSON.stringify(vals) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// mark a job complete — sets Works Status to "Done" (admin or assigned operative)
+app.post('/api/jobs/:id/complete', requireAuth, async (req,res)=>{
+  try{
+    const board = BOARDS.find(b=>b.id===String(req.body.boardId)) || BOARDS[0];
+    if(req.me.role==='operative'){
+      const d = await gql(`query($id:[ID!]){ items(ids:$id){ column_values(ids:["${board.contractor}"]){ text } } }`, { id:[req.params.id] });
+      const text = d.items[0]?.column_values[0]?.text || '';
+      if(norm(text)!==norm(req.me.contractorLabel)) return res.status(403).json({error:'Not your job'});
+    }
+    await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
+      { b:board.id, i:req.params.id, v:JSON.stringify({ [COL.status]:{ label:'Done' } }) });
     res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });

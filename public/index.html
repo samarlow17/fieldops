@@ -131,6 +131,8 @@
   .urow .ucon{flex:1;min-width:120px}
   .urow .usave{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer}
   .urow .usave:disabled{opacity:.5}
+  .urow .ureset{background:#fff;color:var(--muted);border:1px solid var(--line2);border-radius:8px;padding:10px 12px;font-weight:600;cursor:pointer;font-size:13px}
+  .urow .ureset:hover{background:var(--rowhover)}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid #c9cfdb;border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -164,7 +166,7 @@
   <header>
     <div class="logo">Field<span>Ops</span></div>
     <span class="role" id="hRole">—</span>
-    <div class="right"><span class="who" id="hWho"></span><button class="link" id="signOut">Sign out</button></div>
+    <div class="right"><span class="who" id="hWho"></span><button class="link" id="changePw">Change password</button><button class="link" id="signOut">Sign out</button></div>
   </header>
   <div class="bar">
     <div class="seg" id="boardTabs">
@@ -234,6 +236,16 @@ async function login(){
   }catch(e){msg('loginMsg','Connection problem — the server may be waking up, try again in a moment.','err');$('loginBtn').disabled=false;}
 }
 $('signOut').onclick=()=>{store.del('fo_token');store.del('fo_me');location.reload();};
+$('changePw').onclick=async()=>{
+  const cur=prompt('Your current password:'); if(cur===null)return;
+  const nw=prompt('Choose a new password (at least 6 characters):'); if(!nw)return;
+  if(nw.length<6){alert('Password must be at least 6 characters.');return;}
+  try{
+    const r=await fetch('/api/me/password',{method:'POST',headers:JHEAD(),body:JSON.stringify({currentPassword:cur,newPassword:nw})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    alert('Password changed. Use your new password next time you sign in.');
+  }catch(e){ alert(e.message); }
+};
 
 function startApp(){
   $('login').classList.add('hide'); $('app').classList.remove('hide');
@@ -398,28 +410,34 @@ function openDay(ds){
 }
 
 /* ---- manual calendar entries ---- */
-function openAddEvent(){
+function openAddEvent(){ openEventForm(null); }
+function openEditEvent(rawId){ openEventForm(manualEvents.find(x=>x.rawId===rawId)||null); }
+function openEventForm(ev){
   const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort();
   $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+  const date=ev&&ev.visit?ev.visit.split(' ')[0]:'';
+  const time=ev&&ev.visit&&ev.visit.split(' ')[1]?ev.visit.split(' ')[1]:'';
   $('detailInner').innerHTML=`
-    <h2>Add to calendar</h2>
+    <h2>${ev?'Edit calendar entry':'Add to calendar'}</h2>
     <p style="color:var(--muted);font-size:13px;margin:2px 0 8px">For something that isn't on the Monday boards.</p>
-    <label>Title</label><input id="ev_title" placeholder="e.g. Van service, site meeting">
-    <div class="row2"><div><label>Date</label><input id="ev_date" type="date"></div><div><label>Time</label><input id="ev_time" type="time"></div></div>
-    <label>Contractor (optional — who it's for)</label><input id="ev_con" list="contractorList" placeholder="Leave blank for everyone">
-    <label>Notes (optional)</label><input id="ev_notes" placeholder="Any details">
-    <button class="btn" id="ev_save" onclick="saveEvent()">Add to calendar</button>
+    <label>Title</label><input id="ev_title" placeholder="e.g. Van service, site meeting" value="${ev?esc(ev.name):''}">
+    <div class="row2"><div><label>Date</label><input id="ev_date" type="date" value="${date}"></div><div><label>Time</label><input id="ev_time" type="time" value="${time}"></div></div>
+    <label>Contractor (optional — who it's for)</label><input id="ev_con" list="contractorList" placeholder="Leave blank for everyone" value="${ev?esc(ev.contractorLabel):''}">
+    <label>Notes (optional)</label><input id="ev_notes" placeholder="Any details" value="${ev?esc(ev.notes):''}">
+    <button class="btn" id="ev_save" data-edit="${ev?ev.rawId:''}" onclick="saveEvent()">${ev?'Save changes':'Add to calendar'}</button>
     <button class="btn ghost" onclick="closeSheet()">Cancel</button>
     <div class="msg" id="ev_msg"></div>`;
   $('detailSheet').classList.add('open');
 }
 async function saveEvent(){
+  const editId=$('ev_save').dataset.edit;
   const title=$('ev_title').value.trim(), date=$('ev_date').value, time=$('ev_time').value,
         contractor=$('ev_con').value.trim(), notes=$('ev_notes').value.trim();
   if(!title||!date){ msg('ev_msg','Enter a title and a date.','err'); return; }
   $('ev_save').disabled=true; msg('ev_msg','Saving…','');
   try{
-    const r=await fetch('/api/events',{method:'POST',headers:JHEAD(),body:JSON.stringify({title,date,time,contractor,notes})});
+    const url = editId ? '/api/events/'+editId : '/api/events';
+    const r=await fetch(url,{method: editId?'PUT':'POST',headers:JHEAD(),body:JSON.stringify({title,date,time,contractor,notes})});
     const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
     closeSheet(); await loadEvents(); render();
   }catch(e){ msg('ev_msg',e.message,'err'); $('ev_save').disabled=false; }
@@ -434,6 +452,7 @@ function openEvent(rawId){
       <span class="chip">Manual entry</span>
     </div>
     ${e.notes?`<label>Notes</label><div class="note-box">${esc(e.notes)}</div>`:''}
+    ${me.role==='admin'?`<button class="btn" onclick="openEditEvent('${rawId}')">Edit entry</button>`:''}
     <button class="btn ghost" onclick="closeSheet()">Close</button>
     ${me.role==='admin'?`<button class="btn danger" onclick="deleteEvent('${rawId}')">Delete entry</button>`:''}
     <div class="msg" id="d_msg"></div>`;
@@ -492,10 +511,24 @@ function renderDetail(j){
     ${assign}
     <label>Photos (Evidence)</label>
     <div class="photo-grid" id="pgrid">${photos}<div class="add" id="addPhoto">📷<span>Add</span></div></div>
+    ${(j.status||'').toLowerCase()==='done'
+      ? `<div class="chip" style="margin-top:14px;background:#eafaf0;border-color:#b6e6c8;color:#1f8b4c">✅ Marked complete</div>`
+      : `<button class="btn" style="background:#00c875" onclick="markComplete('${j.id}','${j.boardId}')">✅ Mark complete</button>`}
     <button class="btn ghost" onclick="closeSheet()">Close</button>
     <div class="msg" id="d_msg"></div>`;
   $('addPhoto').onclick=()=>{photoTarget={id:j.id,boardId:j.boardId};$('fileInput').value='';$('fileInput').click();};
   if(isAdmin) $('d_save').onclick=()=>saveAssign(j);
+}
+async function markComplete(id,boardId){
+  if(!confirm('Mark this job as complete? (Sets Works Status to "Done" on Monday.)'))return;
+  msg('d_msg','Saving…','');
+  try{
+    const r=await fetch('/api/jobs/'+id+'/complete',{method:'POST',headers:JHEAD(),body:JSON.stringify({boardId})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('d_msg','Marked complete ✓','ok');
+    await loadJobs();
+    const r2=await fetch('/api/jobs/'+id+'?board='+boardId,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
+  }catch(e){ msg('d_msg',e.message,'err'); }
 }
 async function saveAssign(j){
   const contractorId=$('d_contractor').value, date=$('d_date').value, time=$('d_time').value;
@@ -561,6 +594,7 @@ function renderUsers(users){
       </select>
       <input class="ucon" list="contractorList" placeholder="Contractor name" value="${esc(u.contractor||'')}">
       <button class="usave" onclick="saveUser('${u.id}',this)">Save</button>
+      <button class="ureset" onclick="resetPw('${u.id}')">Reset password</button>
     </div>`;
   $('usersInner').innerHTML=`
     <h2>Users</h2>
@@ -582,6 +616,16 @@ async function saveUser(id,btn){
     msg('usersMsg','Saved ✓','ok'); updatePendingBadge();
   }catch(e){ msg('usersMsg',e.message,'err'); }
   btn.disabled=false;
+}
+async function resetPw(id){
+  const p=prompt('Enter a new password for this person (at least 6 characters). Tell them what it is — they can change it later under "Change password".');
+  if(p===null)return; if(p.length<6){alert('Password must be at least 6 characters.');return;}
+  msg('usersMsg','Resetting…','');
+  try{
+    const r=await fetch('/api/users/'+id+'/password',{method:'POST',headers:JHEAD(),body:JSON.stringify({password:p})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('usersMsg','Password reset ✓ — give them the new password.','ok');
+  }catch(e){ msg('usersMsg',e.message,'err'); }
 }
 function closeUsers(){ $('usersSheet').classList.remove('open'); }
 $('usersSheet').addEventListener('click',e=>{if(e.target===$('usersSheet'))closeUsers();});
