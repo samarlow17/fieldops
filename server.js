@@ -1,12 +1,15 @@
 /* ============================================================
-   FieldOps  ›  Monday-synced backend (multi-board, grouped)
-   - Pulls jobs from BOTH maintenance boards (CCH + Private)
-   - Only the Outstanding Calls / Visit Booked / Works in Progress groups
-   - Admin assigns Contractor + Scheduled Visit; operatives add photos to Evidence
+   FieldOps  ›  Monday-synced backend  (email + password accounts)
+   - Jobs come from the CCH + Private maintenance boards (3 groups)
+   - People sign up with email + password; accounts are stored in a
+     private Monday board; an admin approves them and sets which
+     contractor they are. Operatives then see only their own jobs.
    - Your Monday token stays on the server.
    ============================================================ */
 const express = require('express');
 const multer  = require('multer');
+const crypto  = require('crypto');
+const bcrypt  = require('bcryptjs');
 const fs      = require('fs');
 const path    = require('path');
 
@@ -18,50 +21,52 @@ const MONDAY_TOKEN = process.env.MONDAY_TOKEN;
 const API = 'https://api.monday.com/v2';
 if (!MONDAY_TOKEN) { console.error('FATAL: MONDAY_TOKEN env var is not set.'); process.exit(1); }
 
-// The two boards. Only the Contractor column id differs between them.
+/* ---------- which boards / columns ---------- */
 const BOARDS = [
   { id: process.env.CCH_BOARD_ID     || '1652227316', name: 'CCH',     contractor: process.env.CCH_CONTRACTOR     || 'dropdown_mkwxqwz2' },
   { id: process.env.PRIVATE_BOARD_ID || '1733859650', name: 'Private', contractor: process.env.PRIVATE_CONTRACTOR || 'dropdown_mkznxc22' },
 ];
-// Shared column ids (identical on both boards)
 const COL = { address:'dropdown__1', visit:'dup__of_date_of_invoice__1', status:'dup__of_payment_status__1',
               desc:'long_text__1', jobtype:'type__1', evidence:'dup__of_files__1' };
-// Only these groups (matched by title, since ids differ across boards)
 const WANT_GROUPS = ['Outstanding Calls','Visit Booked','Works in Progress'];
-
 const IMG = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(\?|$)/i;
 
-/* ---------- users ----------
-   EDIT THIS LIST to add your team. 'passcode' is what they type to log in.
-   'contractorLabel' must match the Contractor name on the Monday boards, so each
-   operative sees only their own jobs. (A USERS_JSON env var, if set, overrides this.) */
-const DEFAULT_USERS = {
-  admin: { name: 'Office', passcode: 'titerra-admin-4821' },
-  operatives: [
-    { name: 'Keith', passcode: 'keith-2207', contractorLabel: 'Keith' }
-    // , { name: 'Glen', passcode: 'glen-1234', contractorLabel: 'Glen' }
-  ]
+/* ---------- accounts (stored in the private FieldOps Users board) ---------- */
+const USER_BOARD_ID = process.env.USER_BOARD_ID || '5098399575';
+const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm', contractor:'text_mm477f06' };
+
+// A built-in admin that always works, so you can log in and approve people.
+// Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
+const BOOTSTRAP_ADMIN = {
+  email: (process.env.ADMIN_EMAIL || 'admin@titerra.com').toLowerCase(),
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
+  name: 'Office'
 };
-function loadUsers() {
-  if (process.env.USERS_JSON) {
-    try { return JSON.parse(process.env.USERS_JSON); }
-    catch(e){ console.error('USERS_JSON is not valid JSON, using built-in list:', e.message); }
-  }
-  try { return JSON.parse(fs.readFileSync(path.join(__dirname,'users.json'),'utf8')); }
-  catch(e){ return DEFAULT_USERS; }   // no env var, no file → use the built-in list above
+
+/* ---------- login tokens (signed, no DB lookup per request) ---------- */
+const AUTH_SECRET = process.env.AUTH_SECRET || 'fieldops-shared-secret-3f9b2c7a';
+const DAY = 86400000;
+function signToken(obj){
+  const p = Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const s = crypto.createHmac('sha256', AUTH_SECRET).update(p).digest('base64url');
+  return p + '.' + s;
 }
-const norm = s => (s||'').trim().toLowerCase();
+function verifyToken(t){
+  if(!t) return null;
+  const i = t.lastIndexOf('.'); if(i<0) return null;
+  const p = t.slice(0,i), s = t.slice(i+1);
+  const s2 = crypto.createHmac('sha256', AUTH_SECRET).update(p).digest('base64url');
+  if(s !== s2) return null;
+  try { const o = JSON.parse(Buffer.from(p,'base64url').toString()); if(o.exp && Date.now()>o.exp) return null; return o; }
+  catch(e){ return null; }
+}
 function authFromReq(req){
-  const code = (req.get('x-passcode') || '').trim();
-  if(!code) return null;
-  const u = loadUsers();
-  if(u.admin && code === u.admin.passcode) return { role:'admin', name:u.admin.name || 'Admin' };
-  const op = (u.operatives||[]).find(o => o.passcode === code);
-  if(op) return { role:'operative', name:op.name, contractorLabel:op.contractorLabel, contractorId:op.contractorId };
-  return null;
+  const h = req.get('authorization') || '';
+  return verifyToken(h.startsWith('Bearer ') ? h.slice(7) : '');
 }
-function requireAuth(req,res,next){ const me=authFromReq(req); if(!me) return res.status(401).json({error:'Invalid passcode'}); req.me=me; next(); }
+function requireAuth(req,res,next){ const me=authFromReq(req); if(!me) return res.status(401).json({error:'Please sign in again'}); req.me=me; next(); }
 function requireAdmin(req,res,next){ if(req.me.role!=='admin') return res.status(403).json({error:'Admin only'}); next(); }
+const norm = s => (s||'').trim().toLowerCase();
 
 /* ---------- Monday ---------- */
 async function gql(query, variables){
@@ -72,6 +77,32 @@ async function gql(query, variables){
   if(j.errors) throw new Error(j.errors.map(e=>e.message).join('; '));
   return j.data;
 }
+
+/* ---------- account helpers (read/write the Users board) ---------- */
+async function getBoardUsers(){
+  const d = await gql(
+    `query($b:[ID!]){ boards(ids:$b){ items_page(limit:300){ items{ id name column_values(ids:["${UCOL.email}","${UCOL.pass}","${UCOL.role}","${UCOL.contractor}"]){ id text } } } } }`,
+    { b:[USER_BOARD_ID] });
+  return (d.boards[0].items_page.items||[]).map(it=>{
+    const c={}; it.column_values.forEach(x=>c[x.id]=x.text||'');
+    return { id:it.id, name:it.name, email:norm(c[UCOL.email]), hash:c[UCOL.pass]||'',
+             role:(c[UCOL.role]||'pending').trim().toLowerCase(), contractor:c[UCOL.contractor]||'' };
+  });
+}
+async function createBoardUser(name,email,hash){
+  const vals = { [UCOL.email]:email, [UCOL.pass]:hash, [UCOL.role]:'pending', [UCOL.contractor]:'' };
+  await gql(`mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v){ id } }`,
+    { b:USER_BOARD_ID, n:name, v:JSON.stringify(vals) });
+}
+async function updateBoardUser(id,fields){
+  const vals={};
+  if(fields.role!==undefined)       vals[UCOL.role]=fields.role;
+  if(fields.contractor!==undefined) vals[UCOL.contractor]=fields.contractor;
+  await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
+    { b:USER_BOARD_ID, i:id, v:JSON.stringify(vals) });
+}
+
+/* ---------- jobs parsing ---------- */
 function itemFields(board, withAssets){
   return `id name
     ${withAssets ? 'assets { id name public_url }' : ''}
@@ -112,13 +143,64 @@ function parseItem(it, board, grp){
 app.use(express.json());
 app.use(express.static(path.join(__dirname,'public')));
 
-app.post('/api/login', (req,res)=>{
-  const me = authFromReq({ get:(h)=> h==='x-passcode' ? (req.body && req.body.passcode) : '' });
-  if(!me) return res.status(401).json({error:'Invalid passcode'});
-  res.json(me);
+// sign up — creates a pending account
+app.post('/api/signup', async (req,res)=>{
+  try{
+    const { name, email, password } = req.body || {};
+    const e = norm(email);
+    if(!name || !e || !password) return res.status(400).json({error:'Name, email and password are required'});
+    if(!/^\S+@\S+\.\S+$/.test(e)) return res.status(400).json({error:'Enter a valid email address'});
+    if(String(password).length < 6) return res.status(400).json({error:'Password must be at least 6 characters'});
+    if(e === BOOTSTRAP_ADMIN.email) return res.status(409).json({error:'That email is reserved'});
+    const users = await getBoardUsers();
+    if(users.find(u=>u.email===e)) return res.status(409).json({error:'An account with that email already exists'});
+    const hash = bcrypt.hashSync(String(password), 10);
+    await createBoardUser(String(name).trim(), e, hash);
+    res.json({ ok:true, status:'pending' });
+  }catch(err){ res.status(500).json({error:err.message}); }
 });
 
-// contractor options per board (admin assign dropdown)
+// log in — returns a token if approved
+app.post('/api/login', async (req,res)=>{
+  try{
+    const { email, password } = req.body || {};
+    const e = norm(email);
+    if(!e || !password) return res.status(400).json({error:'Email and password are required'});
+    if(e === BOOTSTRAP_ADMIN.email && String(password) === BOOTSTRAP_ADMIN.password){
+      const me = { role:'admin', name:BOOTSTRAP_ADMIN.name, email:e, exp:Date.now()+7*DAY };
+      return res.json({ ...me, approved:true, token:signToken(me) });
+    }
+    const users = await getBoardUsers();
+    const u = users.find(x=>x.email===e);
+    if(!u || !u.hash || !bcrypt.compareSync(String(password), u.hash))
+      return res.status(401).json({error:'Wrong email or password'});
+    if((u.role||'pending')==='pending') return res.json({ approved:false, name:u.name });
+    const me = { role:u.role, name:u.name, email:e, contractorLabel:u.contractor, exp:Date.now()+7*DAY };
+    res.json({ ...me, approved:true, token:signToken(me) });
+  }catch(err){ res.status(500).json({error:err.message}); }
+});
+
+// admin: list accounts
+app.get('/api/users', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const users = await getBoardUsers();
+    res.json(users.map(u=>({ id:u.id, name:u.name, email:u.email, role:u.role, contractor:u.contractor })));
+  }catch(err){ res.status(500).json({error:err.message}); }
+});
+// admin: approve / set role + contractor
+app.post('/api/users/:id', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const { role, contractor } = req.body || {};
+    const allowed = ['pending','operative','admin'];
+    const fields = {};
+    if(role!==undefined){ if(!allowed.includes(role)) return res.status(400).json({error:'Bad role'}); fields.role=role; }
+    if(contractor!==undefined) fields.contractor=String(contractor);
+    await updateBoardUser(req.params.id, fields);
+    res.json({ ok:true });
+  }catch(err){ res.status(500).json({error:err.message}); }
+});
+
+// contractor options per board (admin)
 app.get('/api/contractors', requireAuth, requireAdmin, async (req,res)=>{
   try{
     const result = {};
@@ -142,7 +224,6 @@ app.get('/api/jobs', requireAuth, async (req,res)=>{
         `query($b:[ID!]){ boards(ids:$b){ groups{ id title color items_page(limit:500){ items{ ${itemFields(board,false)} } } } } }`,
         { b:[board.id] });
       const groups = (d.boards[0].groups||[]).filter(g => WANT_GROUPS.includes(g.title));
-      // keep wanted order
       groups.sort((a,b)=> WANT_GROUPS.indexOf(a.title) - WANT_GROUPS.indexOf(b.title));
       for(const g of groups){
         let jobs = g.items_page.items.map(it => parseItem(it, board, g));
@@ -203,5 +284,5 @@ app.post('/api/jobs/:id/photo', requireAuth, upload.single('photo'), async (req,
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-app.get('/api/health', (req,res)=> res.json({ ok:true, boards:BOARDS.map(b=>b.name) }));
+app.get('/api/health', (req,res)=> res.json({ ok:true, version:'3.0-accounts', boards:BOARDS.map(b=>b.name) }));
 app.listen(PORT, ()=> console.log(`FieldOps running on :${PORT}`));

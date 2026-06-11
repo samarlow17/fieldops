@@ -121,6 +121,14 @@
   .hide{display:none !important}
   .viewbtn{font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--accent);cursor:pointer;font-weight:700}
   .viewbtn:hover{background:var(--rowhover)}
+  .urow{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;flex-wrap:wrap}
+  .urow .uinfo{flex:1;min-width:130px}
+  .urow .uname{font-weight:600;font-size:14px}
+  .urow .uemail{font-size:12px;color:var(--muted)}
+  .urow select,.urow .ucon{width:auto;padding:9px}
+  .urow .ucon{flex:1;min-width:120px}
+  .urow .usave{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer}
+  .urow .usave:disabled{opacity:.5}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid #c9cfdb;border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -135,9 +143,16 @@
 <div id="login" class="center">
   <div class="login">
     <h1>Field<span>Ops</span></h1>
-    <div class="sub">Enter your passcode.</div>
-    <label>Passcode</label>
-    <input id="pass" type="password" autocomplete="off">
+    <div class="sub" id="authSub">Sign in to your account.</div>
+    <div class="seg" id="authSeg" style="margin:14px 0 2px">
+      <button id="segIn" class="on" type="button" onclick="authMode('in')">Sign in</button>
+      <button id="segUp" type="button" onclick="authMode('up')">Create account</button>
+    </div>
+    <div id="nameWrap" class="hide"><label>Your name</label><input id="auName" type="text" autocomplete="name"></div>
+    <label>Email</label>
+    <input id="auEmail" type="email" autocomplete="email" placeholder="you@example.com">
+    <label>Password</label>
+    <input id="auPass" type="password" autocomplete="current-password" placeholder="••••••">
     <button class="btn" id="loginBtn">Sign in</button>
     <div class="msg" id="loginMsg"></div>
   </div>
@@ -151,6 +166,7 @@
   </header>
   <div class="bar">
     <button class="viewbtn" id="viewToggle">📅 Calendar view</button>
+    <button class="viewbtn hide" id="usersBtn" onclick="openUsers()">👤 Users</button>
     <input class="search" id="search" placeholder="Search jobs, address, contractor…">
     <button class="link" id="refresh">↻ Refresh</button>
   </div>
@@ -158,7 +174,9 @@
 </div>
 
 <div class="sheet" id="detailSheet"><div class="sheet-inner" id="detailInner"></div></div>
+<div class="sheet" id="usersSheet"><div class="sheet-inner" id="usersInner"></div></div>
 <div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
+<datalist id="contractorList"></datalist>
 <input type="file" id="fileInput" accept="image/*" multiple capture="environment">
 
 <script>
@@ -167,28 +185,49 @@ const $=id=>document.getElementById(id);
 const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
-let me=null, pass=store.get('fo_pass')||'', sections=[], contractors={}, boardFilter='all';
-let view='board', photoTarget=null, collapsed={};
+let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='all';
+let view='board', photoTarget=null, collapsed={}, authM='in';
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
-const HEAD=()=>({'x-passcode':pass});
+const HEAD=()=>({'Authorization':'Bearer '+token});
+const JHEAD=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function msg(id,t,k){const e=$(id);if(!e)return;e.textContent=t;e.className='msg '+(k||'');}
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const WD=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-/* login */
+/* ---- auth: sign in / create account ---- */
+function authMode(m){ authM=m;
+  $('segIn').classList.toggle('on',m==='in'); $('segUp').classList.toggle('on',m==='up');
+  $('nameWrap').classList.toggle('hide',m!=='up');
+  $('loginBtn').textContent = m==='up'?'Create account':'Sign in';
+  $('authSub').textContent = m==='up'?'Create an account — an admin will approve you.':'Sign in to your account.';
+  msg('loginMsg','','');
+}
 $('loginBtn').onclick=login;
-$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+$('auPass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
 async function login(){
-  const code=$('pass').value.trim(); if(!code){msg('loginMsg','Enter your passcode.','err');return;}
+  const email=$('auEmail').value.trim(), password=$('auPass').value, name=$('auName').value.trim();
+  if(!email||!password){msg('loginMsg','Enter your email and password.','err');return;}
   $('loginBtn').disabled=true;
   try{
-    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:code})});
-    if(!r.ok){msg('loginMsg','Wrong passcode.','err');$('loginBtn').disabled=false;return;}
-    me=await r.json(); pass=code; store.set('fo_pass',code); startApp();
-  }catch(e){msg('loginMsg','Connection problem.','err');$('loginBtn').disabled=false;}
+    if(authM==='up'){
+      if(!name){msg('loginMsg','Enter your name.','err');$('loginBtn').disabled=false;return;}
+      const r=await fetch('/api/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,password})});
+      const d=await r.json(); $('loginBtn').disabled=false;
+      if(!r.ok){msg('loginMsg',d.error||'Could not create account.','err');return;}
+      authMode('in'); msg('loginMsg','Account created. An admin needs to approve you before you can sign in.','ok'); return;
+    }
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const d=await r.json(); $('loginBtn').disabled=false;
+    if(r.status===401){msg('loginMsg','Wrong email or password.','err');return;}
+    if(!r.ok){msg('loginMsg',d.error||'Could not sign in.','err');return;}
+    if(d.approved===false){msg('loginMsg','Your account is waiting for an admin to approve it.','ok');return;}
+    token=d.token; me={role:d.role,name:d.name,email:d.email,contractorLabel:d.contractorLabel};
+    store.set('fo_token',token); store.set('fo_me',JSON.stringify(me));
+    startApp();
+  }catch(e){msg('loginMsg','Connection problem — the server may be waking up, try again in a moment.','err');$('loginBtn').disabled=false;}
 }
-$('signOut').onclick=()=>{store.del('fo_pass');location.reload();};
+$('signOut').onclick=()=>{store.del('fo_token');store.del('fo_me');location.reload();};
 
 function startApp(){
   $('login').classList.add('hide'); $('app').classList.remove('hide');
@@ -199,6 +238,7 @@ function startApp(){
     $('search').classList.toggle('hide',view!=='board'); render(); };
   $('search').oninput=render;
   $('refresh').onclick=loadJobs;
+  $('usersBtn').classList.toggle('hide', me.role!=='admin');
   if(me.role==='admin') loadContractors();
   loadJobs();
 }
@@ -207,7 +247,7 @@ async function loadJobs(){
   $('board').innerHTML='<div class="loading"><span class="spin"></span> Loading…</div>';
   try{
     const r=await fetch('/api/jobs',{headers:HEAD()});
-    if(r.status===401){store.del('fo_pass');location.reload();return;}
+    if(r.status===401){store.del('fo_token');store.del('fo_me');location.reload();return;}
     const d=await r.json(); sections=d.sections||[]; render();
   }catch(e){ $('board').innerHTML='<div class="empty">Could not load jobs.<br>'+esc(e.message)+'</div>'; }
 }
@@ -421,8 +461,55 @@ $('lightbox').onclick=()=>$('lightbox').classList.remove('open');
 function closeSheet(){$('detailSheet').classList.remove('open');}
 $('detailSheet').addEventListener('click',e=>{if(e.target===$('detailSheet'))closeSheet();});
 
-if(pass){ fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pass})})
-  .then(r=>r.ok?r.json():Promise.reject()).then(d=>{me=d;startApp();}).catch(()=>store.del('fo_pass')); }
+/* auto sign-in if a valid token is remembered (verified by the first API call) */
+(function(){ const m=store.get('fo_me'); if(token&&m){ try{ me=JSON.parse(m); startApp(); }catch(e){ store.del('fo_token'); store.del('fo_me'); } } })();
+
+/* ---- admin: users / approvals ---- */
+async function openUsers(){
+  $('usersInner').innerHTML='<div class="loading"><span class="spin"></span> Loading users…</div>';
+  $('usersSheet').classList.add('open');
+  if(!Object.keys(contractors).length) await loadContractors();
+  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort();
+  $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+  let users=[]; try{ const r=await fetch('/api/users',{headers:HEAD()}); users=r.ok?await r.json():[]; }catch(e){}
+  renderUsers(users);
+}
+function renderUsers(users){
+  const pending=users.filter(u=>u.role==='pending'), active=users.filter(u=>u.role!=='pending');
+  const row=u=>`
+    <div class="urow" data-id="${u.id}">
+      <div class="uinfo"><div class="uname">${esc(u.name||'(no name)')}</div><div class="uemail">${esc(u.email)}</div></div>
+      <select class="urole">
+        <option value="pending" ${u.role==='pending'?'selected':''}>Pending</option>
+        <option value="operative" ${u.role==='operative'?'selected':''}>Operative</option>
+        <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
+      </select>
+      <input class="ucon" list="contractorList" placeholder="Contractor name" value="${esc(u.contractor||'')}">
+      <button class="usave" onclick="saveUser('${u.id}',this)">Save</button>
+    </div>`;
+  $('usersInner').innerHTML=`
+    <h2>Users</h2>
+    <p style="color:var(--muted);font-size:13px;margin:2px 0 12px">To approve a sign-up: set them to <b>Operative</b> and type the <b>Contractor</b> name they cover (must match the boards exactly). They'll then see only that contractor's jobs and calendar.</p>
+    ${pending.length?`<label>Waiting for approval (${pending.length})</label>${pending.map(row).join('')}`:'<div class="muted" style="font-size:13px;margin-bottom:6px">No one waiting for approval.</div>'}
+    <label style="margin-top:14px">All accounts</label>
+    ${active.length?active.map(row).join(''):'<div class="muted" style="font-size:14px">No approved accounts yet.</div>'}
+    <button class="btn ghost" onclick="closeUsers()">Close</button>
+    <div class="msg" id="usersMsg"></div>`;
+}
+async function saveUser(id,btn){
+  const rowEl=btn.closest('.urow');
+  const role=rowEl.querySelector('.urole').value;
+  const contractor=rowEl.querySelector('.ucon').value.trim();
+  btn.disabled=true; msg('usersMsg','Saving…','');
+  try{
+    const r=await fetch('/api/users/'+id,{method:'POST',headers:JHEAD(),body:JSON.stringify({role,contractor})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('usersMsg','Saved ✓','ok');
+  }catch(e){ msg('usersMsg',e.message,'err'); }
+  btn.disabled=false;
+}
+function closeUsers(){ $('usersSheet').classList.remove('open'); }
+$('usersSheet').addEventListener('click',e=>{if(e.target===$('usersSheet'))closeUsers();});
 </script>
 </body>
 </html>
