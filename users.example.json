@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to users.json and edit. 'contractorId' is the numeric id of the Contractor dropdown option on your CCH board (e.g. Keith=8, Glen=108, Sam=111, Jamie=156). The app shows each operative only the jobs whose Contractor matches their id. Passcodes are what people type to log in — make them unique and hard to guess.",
+
+  "admin": { "name": "Office", "passcode": "CHANGE-ME-admin-2026" },
+
+  "operatives": [
+    { "name": "Keith", "passcode": "keith-CHANGE-ME", "contractorId": 8,   "contractorLabel": "Keith" },
+    { "name": "Glen",  "passcode": "glen-CHANGE-ME",  "contractorId": 108, "contractorLabel": "Glen"  },
+    { "name": "Sam",   "passcode": "sam-CHANGE-ME",   "contractorId": 111, "contractorLabel": "Sam"   }
+  ]
+}

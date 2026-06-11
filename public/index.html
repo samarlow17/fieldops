@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FieldOps</title>
+<style>
+  :root{--bg:#0f1115;--panel:#181b22;--panel2:#1f232c;--line:#2a2f3a;--text:#e7eaf0;--muted:#9aa3b2;
+    --accent:#4f8cff;--accent2:#3a6fd8;--green:#2ecc71;--amber:#f5a623;--red:#ff5c5c;--chip:#262b35}
+  *{box-sizing:border-box}html,body{margin:0;min-height:100%}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;padding-bottom:30px}
+  header{position:sticky;top:0;z-index:20;background:rgba(15,17,21,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:13px 16px;display:flex;align-items:center;gap:10px}
+  header .logo{font-weight:700;font-size:18px}header .logo span{color:var(--accent)}
+  header .role{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:999px;background:var(--chip);color:var(--muted)}
+  header .role.admin{background:rgba(79,140,255,.18);color:#7aa7ff}
+  header .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  header .who{font-size:13px;color:var(--muted)}
+  .link{color:var(--accent);cursor:pointer;font-size:13px;background:none;border:none}
+  .wrap{max-width:680px;margin:0 auto;padding:16px}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+  .filter{font-size:13px;padding:7px 13px;border-radius:999px;cursor:pointer;background:var(--panel);border:1px solid var(--line);color:var(--muted)}
+  .filter.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .search{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px;font-size:15px;margin-bottom:12px}
+  .empty{text-align:center;color:var(--muted);padding:54px 20px}.empty .big{font-size:44px;margin-bottom:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;cursor:pointer}
+  .card .row1{display:flex;align-items:center;gap:10px}.card .title{font-weight:600;font-size:15px;flex:1}
+  .status{font-size:11px;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap;background:var(--chip);color:var(--muted)}
+  .card .meta{color:var(--muted);font-size:13px;margin-top:7px;display:flex;gap:14px;flex-wrap:wrap}
+  .card .meta b{color:var(--text);font-weight:500}
+  .thumbs{display:flex;gap:6px;margin-top:10px}.thumbs img{width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:var(--chip)}
+  .sheet{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.5);display:none;align-items:flex-end;justify-content:center}
+  .sheet.open{display:flex}
+  .sheet-inner{background:var(--panel);width:100%;max-width:680px;max-height:92vh;overflow-y:auto;border-radius:18px 18px 0 0;border:1px solid var(--line);border-bottom:none;padding:18px 18px 30px}
+  .sheet h2{margin:2px 0 6px;font-size:19px}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  input,select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:12px;font-size:15px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .row2{display:flex;gap:10px}.row2>div{flex:1}
+  .btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:600;cursor:pointer;margin-top:18px}
+  .btn:active{background:var(--accent2)}.btn:disabled{opacity:.5}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--text);margin-top:10px}
+  .detail-meta{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 6px}
+  .chip{background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-size:13px;color:var(--muted)}
+  .chip b{color:var(--text);font-weight:500}
+  .note-box{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:14px;white-space:pre-wrap;margin-top:4px}
+  .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+  .photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--chip)}
+  .photo-grid .add{aspect-ratio:1;border:2px dashed var(--line);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;color:var(--muted);font-size:13px;cursor:pointer;background:var(--panel2)}
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:80;display:none;align-items:center;justify-content:center;padding:20px}
+  .lightbox.open{display:flex}.lightbox img{max-width:100%;max-height:100%;border-radius:8px}
+  .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .login{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;width:100%;max-width:380px}
+  .login h1{margin:0 0 4px;font-size:26px}.login h1 span{color:var(--accent)}
+  .login .sub{color:var(--muted);font-size:14px;margin-bottom:6px}
+  .msg{font-size:13px;margin-top:12px;padding:10px;border-radius:8px;display:none}
+  .msg.err{display:block;background:rgba(255,92,92,.12);color:#ff8a8a;border:1px solid rgba(255,92,92,.3)}
+  .msg.ok{display:block;background:rgba(46,204,113,.12);color:#7ee2a8;border:1px solid rgba(46,204,113,.3)}
+  .hide{display:none}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .loading{text-align:center;color:var(--muted);padding:40px}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="center">
+  <div class="login">
+    <h1>Field<span>Ops</span></h1>
+    <div class="sub">Enter your passcode.</div>
+    <label>Passcode</label>
+    <input id="pass" type="password" placeholder="••••••" autocomplete="off">
+    <button class="btn" id="loginBtn">Sign in</button>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" class="hide">
+  <header>
+    <div class="logo">Field<span>Ops</span></div>
+    <span class="role" id="hRole">—</span>
+    <div class="right"><span class="who" id="hWho"></span><button class="link" id="signOut">Sign out</button></div>
+  </header>
+  <div class="wrap">
+    <input class="search" id="search" placeholder="Search jobs…">
+    <div class="toolbar" id="filters"></div>
+    <div id="list"><div class="loading"><span class="spin"></span> Loading jobs…</div></div>
+  </div>
+</div>
+
+<!-- DETAIL -->
+<div class="sheet" id="detailSheet"><div class="sheet-inner" id="detailInner"></div></div>
+<div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
+<input type="file" id="fileInput" accept="image/*" multiple capture="environment">
+
+<script>
+const $=id=>document.getElementById(id);
+let me=null, pass=sessionStorage.getItem('fo_pass')||'', jobs=[], contractors=[], filter='all', photoTargetId=null;
+const HEAD=()=>({'x-passcode':pass});
+
+function msg(id,t,k){const e=$(id);e.textContent=t;e.className='msg '+(k||'');}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* ---- login ---- */
+$('loginBtn').onclick=login;
+$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+async function login(){
+  const code=$('pass').value.trim(); if(!code){msg('loginMsg','Enter your passcode.','err');return;}
+  $('loginBtn').disabled=true;
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:code})});
+    if(!r.ok){msg('loginMsg','Wrong passcode.','err');$('loginBtn').disabled=false;return;}
+    me=await r.json(); pass=code; sessionStorage.setItem('fo_pass',code);
+    startApp();
+  }catch(e){msg('loginMsg','Connection problem.','err');$('loginBtn').disabled=false;}
+}
+$('signOut').onclick=()=>{sessionStorage.removeItem('fo_pass');location.reload();};
+
+async function startApp(){
+  $('login').classList.add('hide'); $('app').classList.remove('hide');
+  $('hWho').textContent=me.name||''; $('hRole').textContent=me.role;
+  $('hRole').className='role'+(me.role==='admin'?' admin':'');
+  // filters
+  const fl=['all','unassigned','scheduled'];
+  $('filters').innerHTML=fl.map(f=>`<div class="filter ${f==='all'?'active':''}" data-f="${f}">${({all:'All',unassigned:'Unassigned',scheduled:'Scheduled'})[f]}</div>`).join('');
+  $('filters').onclick=e=>{const f=e.target.dataset.f;if(!f)return;filter=f;
+    [...document.querySelectorAll('.filter')].forEach(x=>x.classList.toggle('active',x.dataset.f===f));renderJobs();};
+  $('search').oninput=renderJobs;
+  if(me.role==='admin') loadContractors();
+  loadJobs();
+}
+
+async function loadContractors(){
+  try{const r=await fetch('/api/contractors',{headers:HEAD()});contractors=r.ok?await r.json():[];}catch(e){}
+}
+async function loadJobs(){
+  $('list').innerHTML='<div class="loading"><span class="spin"></span> Loading jobs…</div>';
+  try{
+    const r=await fetch('/api/jobs',{headers:HEAD()});
+    if(r.status===401){sessionStorage.removeItem('fo_pass');location.reload();return;}
+    const d=await r.json(); jobs=d.jobs||[]; renderJobs();
+  }catch(e){ $('list').innerHTML='<div class="empty">Could not load jobs. '+esc(e.message)+'</div>'; }
+}
+
+function renderJobs(){
+  const q=($('search').value||'').toLowerCase();
+  let items=jobs.filter(j=>{
+    if(filter==='unassigned' && j.contractorLabel) return false;
+    if(filter==='scheduled' && !j.visit) return false;
+    if(q && !((j.name||'').toLowerCase().includes(q)||(j.address||'').toLowerCase().includes(q))) return false;
+    return true;
+  });
+  if(!items.length){$('list').innerHTML=`<div class="empty"><div class="big">🗂️</div><div>${jobs.length?'No jobs match.':(me.role==='admin'?'No jobs found on the board.':'No jobs assigned to you yet.')}</div></div>`;return;}
+  $('list').innerHTML=items.map(j=>`
+    <div class="card" onclick="openDetail('${j.id}')">
+      <div class="row1"><div class="title">${esc(j.name)}</div>${j.status?`<div class="status">${esc(j.status)}</div>`:''}</div>
+      <div class="meta">
+        ${j.address?`<span>📍 ${esc(j.address)}</span>`:''}
+        ${j.contractorLabel?`<span>👤 <b>${esc(j.contractorLabel)}</b></span>`:'<span>👤 Unassigned</span>'}
+        ${j.visit?`<span>🗓️ ${esc(j.visit)}</span>`:''}
+        ${j.photos.length?`<span>📷 ${j.photos.length}</span>`:''}
+      </div>
+      ${j.photos.length?`<div class="thumbs">${j.photos.slice(0,4).map(p=>`<img src="${p.url}">`).join('')}</div>`:''}
+    </div>`).join('');
+}
+
+/* ---- detail ---- */
+function openDetail(id){
+  const j=jobs.find(x=>x.id===id); if(!j)return;
+  const isAdmin=me.role==='admin';
+  const assignBlock = isAdmin ? `
+    <label>Assign contractor</label>
+    <select id="d_contractor">
+      <option value="">— Select —</option>
+      ${contractors.map(c=>`<option value="${c.id}" ${j.contractorIds.map(String).includes(String(c.id))?'selected':''}>${esc(c.label)}</option>`).join('')}
+    </select>
+    <div class="row2">
+      <div><label>Visit date</label><input id="d_date" type="date" value="${j.visit?j.visit.split(' ')[0]:''}"></div>
+      <div><label>Time</label><input id="d_time" type="time" value="${j.visit&&j.visit.split(' ')[1]?j.visit.split(' ')[1].slice(0,5):''}"></div>
+    </div>
+    <button class="btn" id="d_save">Save assignment</button>
+  ` : `
+    <div class="chip" style="margin-top:8px">🗓️ ${j.visit?esc(j.visit):'No visit scheduled yet'}</div>
+  `;
+  $('detailInner').innerHTML=`
+    <h2>${esc(j.name)}</h2>
+    <div class="detail-meta">
+      ${j.address?`<span class="chip">📍 ${esc(j.address)}</span>`:''}
+      ${j.jobType?`<span class="chip">${esc(j.jobType)}</span>`:''}
+      ${j.status?`<span class="chip">${esc(j.status)}</span>`:''}
+      ${j.contractorLabel?`<span class="chip">👤 <b>${esc(j.contractorLabel)}</b></span>`:''}
+    </div>
+    ${j.description?`<div class="note-box">${esc(j.description)}</div>`:''}
+    ${assignBlock}
+    <label>Photos (Evidence)</label>
+    <div class="photo-grid" id="pgrid">
+      ${j.photos.map(p=>`<img src="${p.url}" onclick="lightOpen('${p.url}')">`).join('')}
+      <div class="add" id="addPhoto">📷<span>Add</span></div>
+    </div>
+    <button class="btn ghost" onclick="closeSheet('detailSheet')">Close</button>
+    <div class="msg" id="d_msg"></div>
+  `;
+  $('detailSheet').classList.add('open');
+  $('addPhoto').onclick=()=>{photoTargetId=id;$('fileInput').value='';$('fileInput').click();};
+  if(isAdmin) $('d_save').onclick=()=>saveAssign(id);
+}
+
+async function saveAssign(id){
+  const contractorId=$('d_contractor').value, date=$('d_date').value, time=$('d_time').value;
+  $('d_save').disabled=true; msg('d_msg','Saving…','');
+  try{
+    const r=await fetch(`/api/jobs/${id}/assign`,{method:'POST',headers:{...HEAD(),'Content-Type':'application/json'},
+      body:JSON.stringify({contractorId,date,time})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('d_msg','Saved to Monday ✓','ok');
+    await refreshJob(id);
+  }catch(e){ msg('d_msg',e.message,'err'); }
+  $('d_save').disabled=false;
+}
+
+$('fileInput').addEventListener('change',async e=>{
+  const id=photoTargetId, files=[...e.target.files]; if(!files.length)return;
+  msg('d_msg',`Uploading ${files.length} photo(s)… `,'');
+  for(const file of files){
+    const blob=await resize(file);
+    const fd=new FormData(); fd.append('photo',blob,(file.name||'photo')+'.jpg');
+    const r=await fetch(`/api/jobs/${id}/photo`,{method:'POST',headers:HEAD(),body:fd});
+    if(!r.ok){const d=await r.json().catch(()=>({}));msg('d_msg','Upload failed: '+(d.error||r.status),'err');return;}
+  }
+  msg('d_msg','Photos uploaded to Monday ✓','ok');
+  await refreshJob(id);
+});
+
+async function refreshJob(id){
+  try{
+    const r=await fetch(`/api/jobs/${id}`,{headers:HEAD()});
+    if(r.ok){const j=await r.json();const i=jobs.findIndex(x=>x.id===id);if(i>=0)jobs[i]=j;else jobs.push(j);
+      renderJobs();openDetail(id);}
+  }catch(e){}
+}
+
+function resize(file){return new Promise(res=>{
+  const img=new Image(),reader=new FileReader();
+  reader.onload=()=>img.src=reader.result;
+  img.onload=()=>{const max=1600;let{width:w,height:h}=img;
+    if(w>h&&w>max){h=h*max/w;w=max}else if(h>max){w=w*max/h;h=max}
+    const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+    c.toBlob(b=>res(b),'image/jpeg',0.8);};
+  reader.readAsDataURL(file);});}
+
+function lightOpen(u){$('lightImg').src=u;$('lightbox').classList.add('open');}
+$('lightbox').onclick=()=>$('lightbox').classList.remove('open');
+function closeSheet(id){$(id).classList.remove('open');}
+$('detailSheet').addEventListener('click',e=>{if(e.target===$('detailSheet'))closeSheet('detailSheet');});
+
+/* auto-login if passcode remembered */
+if(pass){ fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pass})})
+  .then(r=>r.ok?r.json():Promise.reject()).then(d=>{me=d;startApp();}).catch(()=>{sessionStorage.removeItem('fo_pass');}); }
+</script>
+</body>
+</html>
