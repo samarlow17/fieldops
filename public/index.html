@@ -165,6 +165,10 @@
     <div class="right"><span class="who" id="hWho"></span><button class="link" id="signOut">Sign out</button></div>
   </header>
   <div class="bar">
+    <div class="seg" id="boardTabs">
+      <button data-b="CCH" class="on">CCH</button>
+      <button data-b="Private">Private</button>
+    </div>
     <button class="viewbtn" id="viewToggle">📅 Calendar view</button>
     <button class="viewbtn hide" id="usersBtn" onclick="openUsers()">👤 Users</button>
     <input class="search" id="search" placeholder="Search jobs, address, contractor…">
@@ -185,7 +189,7 @@ const $=id=>document.getElementById(id);
 const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
-let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='all';
+let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH';
 let view='board', photoTarget=null, collapsed={}, authM='in';
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'Authorization':'Bearer '+token});
@@ -235,7 +239,11 @@ function startApp(){
   $('hRole').className='role'+(me.role==='admin'?' admin':'');
   $('viewToggle').onclick=()=>{ view=(view==='board')?'calendar':'board';
     $('viewToggle').textContent=(view==='board')?'📅 Calendar view':'☰ Board view';
-    $('search').classList.toggle('hide',view!=='board'); render(); };
+    $('search').classList.toggle('hide',view!=='board');
+    $('boardTabs').classList.toggle('hide',view!=='board'); // tabs only matter on the board
+    render(); };
+  $('boardTabs').onclick=e=>{ const b=e.target.dataset.b; if(!b)return; boardFilter=b;
+    [...$('boardTabs').children].forEach(x=>x.classList.toggle('on',x.dataset.b===b)); render(); };
   $('search').oninput=render;
   $('refresh').onclick=loadJobs;
   $('usersBtn').classList.toggle('hide', me.role!=='admin');
@@ -289,7 +297,7 @@ function toggle(k){ collapsed[k]=!collapsed[k]; renderBoard(); }
 
 /* ---------- calendar view ---------- */
 function scheduledJobs(){
-  let jobs=sections.filter(s=> boardFilter==='all' || s.board===boardFilter).flatMap(s=>s.jobs);
+  let jobs=sections.flatMap(s=>s.jobs); // calendar always spans BOTH boards
   jobs=jobs.filter(j=>j.visit); // must have a scheduled visit
   if(me.role==='admin' && contractorSel) jobs=jobs.filter(j=>contractorSel.has(j.contractorLabel||'Unassigned'));
   return jobs;
