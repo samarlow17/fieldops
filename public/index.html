@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>FieldOps</title>
 <style>
   :root{
@@ -115,7 +118,9 @@
   .msg{font-size:13px;margin-top:12px;padding:10px;border-radius:8px;display:none}
   .msg.err{display:block;background:#fff0f0;color:#c0392b;border:1px solid #f3c2c2}
   .msg.ok{display:block;background:#eafaf0;color:#1f8b4c;border:1px solid #b6e6c8}
-  .hide{display:none}
+  .hide{display:none !important}
+  .viewbtn{font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--accent);cursor:pointer;font-weight:700}
+  .viewbtn:hover{background:var(--rowhover)}
   .spin{display:inline-block;width:15px;height:15px;border:2px solid #c9cfdb;border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
   .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -145,15 +150,7 @@
     <div class="right"><span class="who" id="hWho"></span><button class="link" id="signOut">Sign out</button></div>
   </header>
   <div class="bar">
-    <div class="seg" id="viewSeg">
-      <button data-v="board" class="on">Board</button>
-      <button data-v="calendar">Calendar</button>
-    </div>
-    <div class="seg" id="boardSeg">
-      <button data-b="all" class="on">All boards</button>
-      <button data-b="CCH">CCH</button>
-      <button data-b="Private">Private</button>
-    </div>
+    <button class="viewbtn" id="viewToggle">📅 Calendar view</button>
     <input class="search" id="search" placeholder="Search jobs, address, contractor…">
     <button class="link" id="refresh">↻ Refresh</button>
   </div>
@@ -166,7 +163,11 @@
 
 <script>
 const $=id=>document.getElementById(id);
-let me=null, pass=sessionStorage.getItem('fo_pass')||'', sections=[], contractors={}, boardFilter='all';
+// storage-safe wrappers (some browsers block sessionStorage; never let that break the page)
+const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},
+  set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
+  del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
+let me=null, pass=store.get('fo_pass')||'', sections=[], contractors={}, boardFilter='all';
 let view='board', photoTarget=null, collapsed={};
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'x-passcode':pass});
@@ -184,20 +185,18 @@ async function login(){
   try{
     const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:code})});
     if(!r.ok){msg('loginMsg','Wrong passcode.','err');$('loginBtn').disabled=false;return;}
-    me=await r.json(); pass=code; sessionStorage.setItem('fo_pass',code); startApp();
+    me=await r.json(); pass=code; store.set('fo_pass',code); startApp();
   }catch(e){msg('loginMsg','Connection problem.','err');$('loginBtn').disabled=false;}
 }
-$('signOut').onclick=()=>{sessionStorage.removeItem('fo_pass');location.reload();};
+$('signOut').onclick=()=>{store.del('fo_pass');location.reload();};
 
 function startApp(){
   $('login').classList.add('hide'); $('app').classList.remove('hide');
   $('hWho').textContent=me.name||''; $('hRole').textContent=me.role;
   $('hRole').className='role'+(me.role==='admin'?' admin':'');
-  $('viewSeg').onclick=e=>{const v=e.target.dataset.v;if(!v)return;view=v;
-    [...$('viewSeg').children].forEach(x=>x.classList.toggle('on',x.dataset.v===v));
-    $('search').classList.toggle('hide',v!=='board'); render();};
-  $('boardSeg').onclick=e=>{const b=e.target.dataset.b;if(!b)return;boardFilter=b;
-    [...$('boardSeg').children].forEach(x=>x.classList.toggle('on',x.dataset.b===b));render();};
+  $('viewToggle').onclick=()=>{ view=(view==='board')?'calendar':'board';
+    $('viewToggle').textContent=(view==='board')?'📅 Calendar view':'☰ Board view';
+    $('search').classList.toggle('hide',view!=='board'); render(); };
   $('search').oninput=render;
   $('refresh').onclick=loadJobs;
   if(me.role==='admin') loadContractors();
@@ -208,7 +207,7 @@ async function loadJobs(){
   $('board').innerHTML='<div class="loading"><span class="spin"></span> Loading…</div>';
   try{
     const r=await fetch('/api/jobs',{headers:HEAD()});
-    if(r.status===401){sessionStorage.removeItem('fo_pass');location.reload();return;}
+    if(r.status===401){store.del('fo_pass');location.reload();return;}
     const d=await r.json(); sections=d.sections||[]; render();
   }catch(e){ $('board').innerHTML='<div class="empty">Could not load jobs.<br>'+esc(e.message)+'</div>'; }
 }
@@ -423,7 +422,7 @@ function closeSheet(){$('detailSheet').classList.remove('open');}
 $('detailSheet').addEventListener('click',e=>{if(e.target===$('detailSheet'))closeSheet();});
 
 if(pass){ fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pass})})
-  .then(r=>r.ok?r.json():Promise.reject()).then(d=>{me=d;startApp();}).catch(()=>sessionStorage.removeItem('fo_pass')); }
+  .then(r=>r.ok?r.json():Promise.reject()).then(d=>{me=d;startApp();}).catch(()=>store.del('fo_pass')); }
 </script>
 </body>
 </html>
