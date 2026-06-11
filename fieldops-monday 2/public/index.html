@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FieldOps</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --line:#e6e9ef; --line2:#d0d4dd;
+    --text:#323338; --muted:#676879; --accent:#0073ea; --accent2:#0060b9;
+    --rowhover:#f5f6f8; --head:#f9fafc;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  header{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line);
+    padding:11px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .logo{font-weight:800;font-size:18px}.logo span{color:var(--accent)}
+  .role{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:6px;background:#eef1f7;color:var(--muted)}
+  .role.admin{background:#e5f0ff;color:var(--accent)}
+  .right{margin-left:auto;display:flex;align-items:center;gap:12px}
+  .who{font-size:13px;color:var(--muted)}
+  .link{color:var(--accent);cursor:pointer;font-size:13px;background:none;border:none;padding:0}
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 16px;flex-wrap:wrap;border-bottom:1px solid var(--line);background:#fff}
+  .seg{display:flex;gap:6px}
+  .seg button{font-size:13px;padding:6px 14px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--muted);cursor:pointer;font-weight:600}
+  .seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .search{flex:1;min-width:160px;background:#fff;border:1px solid var(--line2);border-radius:8px;padding:8px 12px;font-size:14px}
+  .search:focus{outline:none;border-color:var(--accent)}
+  .wrap{padding:14px 16px 60px;max-width:1100px;margin:0 auto}
+  .loading,.empty{text-align:center;color:var(--muted);padding:50px 20px}
+  .empty .big{font-size:42px;margin-bottom:8px}
+
+  .group{margin-bottom:22px}
+  .ghead{display:flex;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;user-select:none}
+  .caret{width:0;height:0;border-left:6px solid currentColor;border-top:5px solid transparent;border-bottom:5px solid transparent;transition:transform .15s}
+  .group.collapsed .caret{transform:rotate(0)}
+  .group:not(.collapsed) .caret{transform:rotate(90deg)}
+  .gtitle{font-weight:700;font-size:15px}
+  .gcount{font-size:12px;color:var(--muted);background:#eef1f7;border-radius:10px;padding:1px 8px}
+  .gboard{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);border:1px solid var(--line2);border-radius:5px;padding:1px 6px}
+
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:#fff}
+  table{border-collapse:collapse;width:100%;min-width:720px;font-size:13px}
+  thead th{background:var(--head);color:var(--muted);font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0}
+  tbody td{padding:0;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--rowhover)}
+  td .cell{padding:10px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+  td.name .cell{font-weight:600;border-left:4px solid var(--gc,#c4c4c4);max-width:320px;white-space:normal}
+  .pill{display:inline-block;color:#fff;font-weight:600;font-size:12px;padding:5px 10px;border-radius:5px;text-align:center;min-width:90px}
+  .muted{color:var(--muted)}
+  .cam{color:var(--muted);font-weight:600}
+
+  /* detail sheet */
+  .sheet{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.35);display:none;align-items:flex-end;justify-content:center}
+  .sheet.open{display:flex}
+  .sheet-inner{background:#fff;width:100%;max-width:640px;max-height:92vh;overflow-y:auto;border-radius:14px 14px 0 0;padding:18px 18px 30px}
+  @media(min-width:640px){.sheet{align-items:center}.sheet-inner{border-radius:14px}}
+  .sheet h2{margin:2px 0 4px;font-size:19px}
+  .detail-meta{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 4px}
+  .chip{background:#f1f3f8;border:1px solid var(--line);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--muted)}
+  .chip b{color:var(--text);font-weight:600}
+  label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600}
+  input,select{width:100%;background:#fff;border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:11px;font-size:15px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .row2{display:flex;gap:10px}.row2>div{flex:1}
+  .note-box{background:#f9fafc;border:1px solid var(--line);border-radius:8px;padding:11px;font-size:14px;white-space:pre-wrap;color:#3a3b44}
+  .btn{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px}
+  .btn:active{background:var(--accent2)}.btn:disabled{opacity:.5}
+  .btn.ghost{background:#fff;border:1px solid var(--line2);color:var(--text);margin-top:9px}
+  .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+  .photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#eef1f7}
+  .photo-grid .file{aspect-ratio:1;border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:11px;color:var(--muted);padding:6px;background:#f9fafc;word-break:break-word}
+  .photo-grid .add{aspect-ratio:1;border:2px dashed var(--line2);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;color:var(--muted);font-size:13px;cursor:pointer;background:#fbfcfe}
+  .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:80;display:none;align-items:center;justify-content:center;padding:20px}
+  .lightbox.open{display:flex}.lightbox img{max-width:100%;max-height:100%;border-radius:6px}
+  .msg{font-size:13px;margin-top:12px;padding:10px;border-radius:8px;display:none}
+  .msg.err{display:block;background:#fff0f0;color:#c0392b;border:1px solid #f3c2c2}
+  .msg.ok{display:block;background:#eafaf0;color:#1f8b4c;border:1px solid #b6e6c8}
+  .hide{display:none}
+  .spin{display:inline-block;width:15px;height:15px;border:2px solid #c9cfdb;border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  /* login */
+  .center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .login{background:#fff;border:1px solid var(--line);border-radius:14px;padding:26px;width:100%;max-width:360px;box-shadow:0 6px 30px rgba(0,0,0,.06)}
+  .login h1{margin:0 0 4px;font-size:26px}.login h1 span{color:var(--accent)}
+  .login .sub{color:var(--muted);font-size:14px;margin-bottom:4px}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+
+<div id="login" class="center">
+  <div class="login">
+    <h1>Field<span>Ops</span></h1>
+    <div class="sub">Enter your passcode.</div>
+    <label>Passcode</label>
+    <input id="pass" type="password" autocomplete="off">
+    <button class="btn" id="loginBtn">Sign in</button>
+    <div class="msg" id="loginMsg"></div>
+  </div>
+</div>
+
+<div id="app" class="hide">
+  <header>
+    <div class="logo">Field<span>Ops</span></div>
+    <span class="role" id="hRole">—</span>
+    <div class="right"><span class="who" id="hWho"></span><button class="link" id="signOut">Sign out</button></div>
+  </header>
+  <div class="bar">
+    <div class="seg" id="boardSeg">
+      <button data-b="all" class="on">All boards</button>
+      <button data-b="CCH">CCH</button>
+      <button data-b="Private">Private</button>
+    </div>
+    <input class="search" id="search" placeholder="Search jobs, address, contractor…">
+    <button class="link" id="refresh">↻ Refresh</button>
+  </div>
+  <div class="wrap" id="board"><div class="loading"><span class="spin"></span> Loading…</div></div>
+</div>
+
+<div class="sheet" id="detailSheet"><div class="sheet-inner" id="detailInner"></div></div>
+<div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
+<input type="file" id="fileInput" accept="image/*" multiple capture="environment">
+
+<script>
+const $=id=>document.getElementById(id);
+let me=null, pass=sessionStorage.getItem('fo_pass')||'', sections=[], contractors={}, boardFilter='all', photoTarget=null, collapsed={};
+const HEAD=()=>({'x-passcode':pass});
+const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function msg(id,t,k){const e=$(id);if(!e)return;e.textContent=t;e.className='msg '+(k||'');}
+
+/* login */
+$('loginBtn').onclick=login;
+$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')login();});
+async function login(){
+  const code=$('pass').value.trim(); if(!code){msg('loginMsg','Enter your passcode.','err');return;}
+  $('loginBtn').disabled=true;
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:code})});
+    if(!r.ok){msg('loginMsg','Wrong passcode.','err');$('loginBtn').disabled=false;return;}
+    me=await r.json(); pass=code; sessionStorage.setItem('fo_pass',code); startApp();
+  }catch(e){msg('loginMsg','Connection problem.','err');$('loginBtn').disabled=false;}
+}
+$('signOut').onclick=()=>{sessionStorage.removeItem('fo_pass');location.reload();};
+
+function startApp(){
+  $('login').classList.add('hide'); $('app').classList.remove('hide');
+  $('hWho').textContent=me.name||''; $('hRole').textContent=me.role;
+  $('hRole').className='role'+(me.role==='admin'?' admin':'');
+  $('boardSeg').onclick=e=>{const b=e.target.dataset.b;if(!b)return;boardFilter=b;
+    [...$('boardSeg').children].forEach(x=>x.classList.toggle('on',x.dataset.b===b));render();};
+  $('search').oninput=render;
+  $('refresh').onclick=loadJobs;
+  if(me.role==='admin') loadContractors();
+  loadJobs();
+}
+
+async function loadContractors(){ try{const r=await fetch('/api/contractors',{headers:HEAD()});contractors=r.ok?await r.json():{};}catch(e){} }
+
+async function loadJobs(){
+  $('board').innerHTML='<div class="loading"><span class="spin"></span> Loading…</div>';
+  try{
+    const r=await fetch('/api/jobs',{headers:HEAD()});
+    if(r.status===401){sessionStorage.removeItem('fo_pass');location.reload();return;}
+    const d=await r.json(); sections=d.sections||[]; render();
+  }catch(e){ $('board').innerHTML='<div class="empty">Could not load jobs.<br>'+esc(e.message)+'</div>'; }
+}
+
+function render(){
+  const q=($('search').value||'').toLowerCase();
+  let secs=sections.filter(s=> boardFilter==='all' || s.board===boardFilter);
+  const filt=s=>({...s, jobs:s.jobs.filter(j=>!q ||
+    (j.name||'').toLowerCase().includes(q)||(j.address||'').toLowerCase().includes(q)||(j.contractorLabel||'').toLowerCase().includes(q))});
+  secs=secs.map(filt);
+  const total=secs.reduce((n,s)=>n+s.jobs.length,0);
+  if(!total){ $('board').innerHTML=`<div class="empty"><div class="big">🗂️</div><div>${me.role==='operative'?'No jobs assigned to you in these groups.':'No jobs in these groups.'}</div></div>`; return; }
+  $('board').innerHTML=secs.map(sec=>{
+    if(!sec.jobs.length) return '';
+    const key=sec.boardId+'|'+sec.groupId;
+    const isCol=collapsed[key];
+    const rows=sec.jobs.map(j=>`
+      <tr onclick="openDetail('${j.id}','${j.boardId}')">
+        <td class="name" style="--gc:${esc(sec.color)}"><div class="cell">${esc(j.name)}</div></td>
+        <td><div class="cell ${j.address?'':'muted'}">${esc(j.address||'—')}</div></td>
+        <td><div class="cell ${j.jobType?'':'muted'}">${esc(j.jobType||'—')}</div></td>
+        <td><div class="cell ${j.contractorLabel?'':'muted'}">${esc(j.contractorLabel||'Unassigned')}</div></td>
+        <td><div class="cell">${j.status?`<span class="pill" style="background:${esc(j.statusColor)}">${esc(j.status)}</span>`:'<span class="muted">—</span>'}</div></td>
+        <td><div class="cell ${j.visit?'':'muted'}">${esc(j.visit||'—')}</div></td>
+        <td><div class="cell cam">${j.photoCount?('📷 '+j.photoCount):'—'}</div></td>
+      </tr>`).join('');
+    return `<div class="group ${isCol?'collapsed':''}">
+      <div class="ghead" style="color:${esc(sec.color)}" onclick="toggle('${key}')">
+        <span class="caret"></span><span class="gtitle">${esc(sec.title)}</span>
+        <span class="gboard">${esc(sec.board)}</span><span class="gcount">${sec.jobs.length}</span>
+      </div>
+      ${isCol?'':`<div class="tablewrap"><table>
+        <thead><tr><th>Job</th><th>Address</th><th>Job Type</th><th>Contractor</th><th>Works Status</th><th>Scheduled Visit</th><th>Photos</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`}
+    </div>`;
+  }).join('');
+}
+function toggle(k){ collapsed[k]=!collapsed[k]; render(); }
+
+/* detail */
+async function openDetail(id, boardId){
+  const job = findJob(id);
+  $('detailInner').innerHTML='<div class="loading"><span class="spin"></span> Loading job…</div>';
+  $('detailSheet').classList.add('open');
+  let full=job;
+  try{ const r=await fetch(`/api/jobs/${id}?board=${boardId}`,{headers:HEAD()}); if(r.ok) full=await r.json(); }catch(e){}
+  renderDetail(full||job);
+}
+function findJob(id){ for(const s of sections){const j=s.jobs.find(x=>x.id===id); if(j)return j;} return null; }
+
+function renderDetail(j){
+  const isAdmin=me.role==='admin';
+  const opts=(contractors[j.boardId]||[]);
+  const assign = isAdmin ? `
+    <label>Assign contractor</label>
+    <select id="d_contractor"><option value="">— Select —</option>
+      ${opts.map(c=>`<option value="${c.id}" ${j.contractorIds&&j.contractorIds.map(String).includes(String(c.id))?'selected':''}>${esc(c.label)}</option>`).join('')}
+    </select>
+    <div class="row2">
+      <div><label>Visit date</label><input id="d_date" type="date" value="${j.visit?j.visit.split(' ')[0]:''}"></div>
+      <div><label>Time</label><input id="d_time" type="time" value="${j.visit&&j.visit.split(' ')[1]?j.visit.split(' ')[1]:''}"></div>
+    </div>
+    <button class="btn" id="d_save">Save assignment</button>` : `
+    <div class="chip" style="margin-top:8px">🗓️ ${j.visit?esc(j.visit):'No visit scheduled'}</div>`;
+  const photos=(j.photos||[]).map(p=> p.isImage
+    ? `<img src="${p.url}" onclick="lightOpen('${p.url}')">`
+    : `<a class="file" href="${p.url}" target="_blank">📄 ${esc(p.name||'file')}</a>`).join('');
+  $('detailInner').innerHTML=`
+    <h2>${esc(j.name)}</h2>
+    <div class="detail-meta">
+      <span class="chip"><b>${esc(j.board)}</b> · ${esc(j.groupTitle||'')}</span>
+      ${j.address?`<span class="chip">📍 ${esc(j.address)}</span>`:''}
+      ${j.jobType?`<span class="chip">${esc(j.jobType)}</span>`:''}
+      ${j.status?`<span class="chip">${esc(j.status)}</span>`:''}
+      ${j.contractorLabel?`<span class="chip">👤 <b>${esc(j.contractorLabel)}</b></span>`:''}
+    </div>
+    ${j.description?`<label>Description</label><div class="note-box">${esc(j.description)}</div>`:''}
+    ${assign}
+    <label>Photos (Evidence)</label>
+    <div class="photo-grid" id="pgrid">${photos}<div class="add" id="addPhoto">📷<span>Add</span></div></div>
+    <button class="btn ghost" onclick="closeSheet()">Close</button>
+    <div class="msg" id="d_msg"></div>`;
+  $('addPhoto').onclick=()=>{photoTarget={id:j.id,boardId:j.boardId};$('fileInput').value='';$('fileInput').click();};
+  if(isAdmin) $('d_save').onclick=()=>saveAssign(j);
+}
+
+async function saveAssign(j){
+  const contractorId=$('d_contractor').value, date=$('d_date').value, time=$('d_time').value;
+  $('d_save').disabled=true; msg('d_msg','Saving…','');
+  try{
+    const r=await fetch(`/api/jobs/${j.id}/assign`,{method:'POST',headers:{...HEAD(),'Content-Type':'application/json'},
+      body:JSON.stringify({boardId:j.boardId,contractorId,date,time})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('d_msg','Saved to Monday ✓','ok');
+    await loadJobs(); const fresh=findJob(j.id); if(fresh){const r2=await fetch(`/api/jobs/${j.id}?board=${j.boardId}`,{headers:HEAD()});renderDetail(r2.ok?await r2.json():fresh);}
+  }catch(e){ msg('d_msg',e.message,'err'); }
+  $('d_save').disabled=false;
+}
+
+$('fileInput').addEventListener('change',async e=>{
+  const t=photoTarget, files=[...e.target.files]; if(!files.length||!t)return;
+  msg('d_msg',`Uploading ${files.length} photo(s)…`,'');
+  for(const file of files){
+    const blob=await resize(file);
+    const fd=new FormData(); fd.append('photo',blob,(file.name||'photo')+'.jpg'); fd.append('boardId',t.boardId);
+    const r=await fetch(`/api/jobs/${t.id}/photo`,{method:'POST',headers:HEAD(),body:fd});
+    if(!r.ok){const d=await r.json().catch(()=>({}));msg('d_msg','Upload failed: '+(d.error||r.status),'err');return;}
+  }
+  msg('d_msg','Photos uploaded to Monday ✓','ok');
+  const r2=await fetch(`/api/jobs/${t.id}?board=${t.boardId}`,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
+  loadJobs();
+});
+function resize(file){return new Promise(res=>{
+  const img=new Image(),reader=new FileReader();
+  reader.onload=()=>img.src=reader.result;
+  img.onload=()=>{const max=1600;let{width:w,height:h}=img;
+    if(w>h&&w>max){h=h*max/w;w=max}else if(h>max){w=w*max/h;h=max}
+    const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+    c.toBlob(b=>res(b),'image/jpeg',0.8);};
+  reader.readAsDataURL(file);});}
+
+function lightOpen(u){$('lightImg').src=u;$('lightbox').classList.add('open');}
+$('lightbox').onclick=()=>$('lightbox').classList.remove('open');
+function closeSheet(){$('detailSheet').classList.remove('open');}
+$('detailSheet').addEventListener('click',e=>{if(e.target===$('detailSheet'))closeSheet();});
+
+if(pass){ fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({passcode:pass})})
+  .then(r=>r.ok?r.json():Promise.reject()).then(d=>{me=d;startApp();}).catch(()=>sessionStorage.removeItem('fo_pass')); }
+</script>
+</body>
+</html>

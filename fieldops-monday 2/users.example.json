@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy to users.json (or paste as the USERS_JSON env var). Operatives are matched to jobs by 'contractorLabel' — the exact Contractor name as it appears on the boards (case-insensitive). This works across BOTH boards, so the operative sees their jobs from CCH and Private together. If a person's Contractor name is spelled differently on the two boards, give them whichever you use, or add a second operative entry. Passcodes are what people type to log in — make them unique and hard to guess.",
+
+  "admin": { "name": "Office", "passcode": "CHANGE-ME-admin-2026" },
+
+  "operatives": [
+    { "name": "Keith", "passcode": "keith-CHANGE-ME", "contractorLabel": "Keith" },
+    { "name": "Glen",  "passcode": "glen-CHANGE-ME",  "contractorLabel": "Glen"  },
+    { "name": "Sam",   "passcode": "sam-CHANGE-ME",   "contractorLabel": "Sam"   }
+  ]
+}

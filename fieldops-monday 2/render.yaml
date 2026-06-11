@@ -1,0 +1,17 @@
+# One-click-ish deploy config for Render.
+# In Render: New → Blueprint → point at this repo. It reads this file.
+# Then set the two secret values (MONDAY_TOKEN, USERS_JSON) in the dashboard.
+services:
+  - type: web
+    name: fieldops
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONDAY_TOKEN
+        sync: false        # paste your monday token in the Render dashboard
+      - key: USERS_JSON
+        sync: false        # paste your users JSON (admin + operatives) in the dashboard
+      - key: BOARD_ID
+        value: "1652227316"
