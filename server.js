@@ -31,14 +31,24 @@ const WANT_GROUPS = ['Outstanding Calls','Visit Booked','Works in Progress'];
 
 const IMG = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(\?|$)/i;
 
-/* ---------- users ---------- */
+/* ---------- users ----------
+   EDIT THIS LIST to add your team. 'passcode' is what they type to log in.
+   'contractorLabel' must match the Contractor name on the Monday boards, so each
+   operative sees only their own jobs. (A USERS_JSON env var, if set, overrides this.) */
+const DEFAULT_USERS = {
+  admin: { name: 'Office', passcode: 'titerra-admin-4821' },
+  operatives: [
+    { name: 'Keith', passcode: 'keith-2207', contractorLabel: 'Keith' }
+    // , { name: 'Glen', passcode: 'glen-1234', contractorLabel: 'Glen' }
+  ]
+};
 function loadUsers() {
   if (process.env.USERS_JSON) {
     try { return JSON.parse(process.env.USERS_JSON); }
-    catch(e){ console.error('USERS_JSON is not valid JSON:', e.message); }
+    catch(e){ console.error('USERS_JSON is not valid JSON, using built-in list:', e.message); }
   }
   try { return JSON.parse(fs.readFileSync(path.join(__dirname,'users.json'),'utf8')); }
-  catch(e){ console.error('No users.json and no USERS_JSON env var:', e.message); return { admin:null, operatives:[] }; }
+  catch(e){ return DEFAULT_USERS; }   // no env var, no file → use the built-in list above
 }
 const norm = s => (s||'').trim().toLowerCase();
 function authFromReq(req){
