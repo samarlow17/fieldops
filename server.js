@@ -34,12 +34,15 @@ const IMG = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(\?|$)/i;
 /* ---------- accounts (stored in the private FieldOps Users board) ---------- */
 const USER_BOARD_ID = process.env.USER_BOARD_ID || '5098399575';
 const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm', contractor:'text_mm477f06' };
+// manual calendar entries (things not on the maintenance boards)
+const EVENT_BOARD_ID = process.env.EVENT_BOARD_ID || '5098400789';
+const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm47j8dy' };
 
 // A built-in admin that always works, so you can log in and approve people.
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'Southend78781',
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
   name: 'Sam'
 };
 
@@ -100,6 +103,18 @@ async function updateBoardUser(id,fields){
   if(fields.contractor!==undefined) vals[UCOL.contractor]=fields.contractor;
   await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
     { b:USER_BOARD_ID, i:id, v:JSON.stringify(vals) });
+}
+
+/* ---------- manual calendar entries ---------- */
+async function getEvents(){
+  const d = await gql(
+    `query($b:[ID!]){ boards(ids:$b){ items_page(limit:300){ items{ id name column_values(ids:["${ECOL.when}","${ECOL.contractor}","${ECOL.notes}"]){ id text value } } } } }`,
+    { b:[EVENT_BOARD_ID] });
+  return (d.boards[0].items_page.items||[]).map(it=>{
+    const c={}; it.column_values.forEach(x=>c[x.id]=x);
+    let date=null, time=''; try{ const v=JSON.parse(c[ECOL.when]?.value||'null'); if(v){ date=v.date; time=v.time?v.time.slice(0,5):''; } }catch(e){}
+    return { id:it.id, title:it.name, date, time, contractor:c[ECOL.contractor]?.text||'', notes:c[ECOL.notes]?.text||'' };
+  });
 }
 
 /* ---------- jobs parsing ---------- */
@@ -198,6 +213,34 @@ app.post('/api/users/:id', requireAuth, requireAdmin, async (req,res)=>{
     await updateBoardUser(req.params.id, fields);
     res.json({ ok:true });
   }catch(err){ res.status(500).json({error:err.message}); }
+});
+
+// manual calendar entries
+app.get('/api/events', requireAuth, async (req,res)=>{
+  try{
+    let events = await getEvents();
+    events = events.filter(e=>e.date);
+    if(req.me.role==='operative') events = events.filter(e=>norm(e.contractor)===norm(req.me.contractorLabel));
+    res.json(events);
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/events', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const { title, date, time, contractor, notes } = req.body || {};
+    if(!title || !date) return res.status(400).json({error:'Title and date are required'});
+    const vals = {
+      [ECOL.when]: { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') },
+      [ECOL.contractor]: contractor || '',
+      [ECOL.notes]: notes || ''
+    };
+    await gql(`mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v){ id } }`,
+      { b:EVENT_BOARD_ID, n:String(title), v:JSON.stringify(vals) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.delete('/api/events/:id', requireAuth, requireAdmin, async (req,res)=>{
+  try{ await gql(`mutation($i:ID!){ delete_item(item_id:$i){ id } }`, { i:req.params.id }); res.json({ ok:true }); }
+  catch(e){ res.status(500).json({error:e.message}); }
 });
 
 // contractor options per board (admin)

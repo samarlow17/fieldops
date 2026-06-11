@@ -121,6 +121,8 @@
   .hide{display:none !important}
   .viewbtn{font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--accent);cursor:pointer;font-weight:700}
   .viewbtn:hover{background:var(--rowhover)}
+  .badge-dot{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;margin-left:6px;background:#e2445c;color:#fff;border-radius:9px;font-size:11px;font-weight:700}
+  .btn.danger{background:#fff;border:1px solid #e2445c;color:#c0392b;margin-top:10px}
   .urow{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;flex-wrap:wrap}
   .urow .uinfo{flex:1;min-width:130px}
   .urow .uname{font-weight:600;font-size:14px}
@@ -170,7 +172,7 @@
       <button data-b="Private">Private</button>
     </div>
     <button class="viewbtn" id="viewToggle">📅 Calendar view</button>
-    <button class="viewbtn hide" id="usersBtn" onclick="openUsers()">👤 Users</button>
+    <button class="viewbtn hide" id="usersBtn" onclick="openUsers()">👤 Users<span id="pendBadge" class="badge-dot hide">0</span></button>
     <input class="search" id="search" placeholder="Search jobs, address, contractor…">
     <button class="link" id="refresh">↻ Refresh</button>
   </div>
@@ -189,7 +191,7 @@ const $=id=>document.getElementById(id);
 const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
-let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH';
+let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH', manualEvents=[];
 let view='board', photoTarget=null, collapsed={}, authM='in';
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'Authorization':'Bearer '+token});
@@ -247,7 +249,7 @@ function startApp(){
   $('search').oninput=render;
   $('refresh').onclick=loadJobs;
   $('usersBtn').classList.toggle('hide', me.role!=='admin');
-  if(me.role==='admin') loadContractors();
+  if(me.role==='admin'){ loadContractors(); updatePendingBadge(); }
   loadJobs();
 }
 async function loadContractors(){ try{const r=await fetch('/api/contractors',{headers:HEAD()});contractors=r.ok?await r.json():{};}catch(e){} }
@@ -256,8 +258,15 @@ async function loadJobs(){
   try{
     const r=await fetch('/api/jobs',{headers:HEAD()});
     if(r.status===401){store.del('fo_token');store.del('fo_me');location.reload();return;}
-    const d=await r.json(); sections=d.sections||[]; render();
+    const d=await r.json(); sections=d.sections||[]; await loadEvents(); render();
   }catch(e){ $('board').innerHTML='<div class="empty">Could not load jobs.<br>'+esc(e.message)+'</div>'; }
+}
+async function loadEvents(){
+  try{ const r=await fetch('/api/events',{headers:HEAD()}); const arr=r.ok?await r.json():[];
+    manualEvents=arr.map(e=>({ id:'evt-'+e.id, rawId:e.id, isManual:true, name:e.title,
+      visit:e.date+(e.time?(' '+e.time):''), contractorLabel:e.contractor||'', notes:e.notes||'',
+      board:'Manual', groupColor:'#9b51e0', address:'' }));
+  }catch(e){ manualEvents=[]; }
 }
 
 function render(){ view==='calendar' ? renderCalendar() : renderBoard(); }
@@ -297,8 +306,8 @@ function toggle(k){ collapsed[k]=!collapsed[k]; renderBoard(); }
 
 /* ---------- calendar view ---------- */
 function scheduledJobs(){
-  let jobs=sections.flatMap(s=>s.jobs); // calendar always spans BOTH boards
-  jobs=jobs.filter(j=>j.visit); // must have a scheduled visit
+  // both boards' scheduled jobs + manual calendar entries
+  let jobs=sections.flatMap(s=>s.jobs).filter(j=>j.visit).concat(manualEvents);
   if(me.role==='admin' && contractorSel) jobs=jobs.filter(j=>contractorSel.has(j.contractorLabel||'Unassigned'));
   return jobs;
 }
@@ -334,7 +343,8 @@ function renderCalendar(){
     const list=byDay[ds]||[];
     const shown=list.slice(0,3).map(j=>{
       const t=(j.visit.split(' ')[1]||'');
-      return `<div class="evt" style="background:${esc(j.groupColor||'#0073ea')}" title="${esc(j.name)}" onclick="event.stopPropagation();openDetail('${j.id}','${j.boardId}')">${t?esc(t)+' ':''}${esc(j.contractorLabel||j.name)}</div>`;
+      const click=j.isManual?`openEvent('${j.rawId}')`:`openDetail('${j.id}','${j.boardId}')`;
+      return `<div class="evt" style="background:${esc(j.groupColor||'#0073ea')}" title="${esc(j.name)}" onclick="event.stopPropagation();${click}">${j.isManual?'📌 ':''}${t?esc(t)+' ':''}${esc(j.contractorLabel||j.name)}</div>`;
     }).join('');
     const more=list.length>3?`<div class="evtmore">+${list.length-3} more</div>`:'';
     cells+=`<div class="day ${out?'out':''} ${isToday(d)?'today':''}" onclick="openDay('${ds}')">
@@ -346,6 +356,7 @@ function renderCalendar(){
       <div class="calmonth">${MONTHS[m]} ${y}</div>
       <button class="navbtn" onclick="calMove(1)">›</button>
       <button class="todaybtn" onclick="calToday()">Today</button>
+      ${me.role==='admin'?'<button class="todaybtn" onclick="openAddEvent()">➕ Add entry</button>':''}
       ${filterHtml}
     </div>
     <div class="grid">
@@ -377,12 +388,68 @@ function openDay(ds){
   const d=new Date(ds+'T00:00:00');
   const head=`<h3>${WD[(d.getDay()+6)%7]} ${d.getDate()} ${MONTHS[d.getMonth()]}</h3>`;
   if(!jobs.length){ p.innerHTML=head+'<div class="muted" style="font-size:14px">No visits scheduled.</div>'; return; }
-  p.innerHTML=head+jobs.map(j=>`
-    <div class="dayjob" style="--gc:${esc(j.groupColor||'#c4c4c4')}" onclick="openDetail('${j.id}','${j.boardId}')">
+  p.innerHTML=head+jobs.map(j=>{
+    const click=j.isManual?`openEvent('${j.rawId}')`:`openDetail('${j.id}','${j.boardId}')`;
+    return `<div class="dayjob" style="--gc:${esc(j.groupColor||'#c4c4c4')}" onclick="${click}">
       <div class="t">${esc(j.visit.split(' ')[1]||'')}</div>
-      <div><div class="nm">${esc(j.name)}</div>
-        <div class="sub">${esc(j.board)} · ${esc(j.contractorLabel||'Unassigned')}${j.address?' · '+esc(j.address):''}</div></div>
-    </div>`).join('');
+      <div><div class="nm">${j.isManual?'📌 ':''}${esc(j.name)}</div>
+        <div class="sub">${j.isManual?'Manual entry':esc(j.board)} · ${esc(j.contractorLabel||'Unassigned')}${j.address?' · '+esc(j.address):''}</div></div>
+    </div>`;}).join('');
+}
+
+/* ---- manual calendar entries ---- */
+function openAddEvent(){
+  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort();
+  $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+  $('detailInner').innerHTML=`
+    <h2>Add to calendar</h2>
+    <p style="color:var(--muted);font-size:13px;margin:2px 0 8px">For something that isn't on the Monday boards.</p>
+    <label>Title</label><input id="ev_title" placeholder="e.g. Van service, site meeting">
+    <div class="row2"><div><label>Date</label><input id="ev_date" type="date"></div><div><label>Time</label><input id="ev_time" type="time"></div></div>
+    <label>Contractor (optional — who it's for)</label><input id="ev_con" list="contractorList" placeholder="Leave blank for everyone">
+    <label>Notes (optional)</label><input id="ev_notes" placeholder="Any details">
+    <button class="btn" id="ev_save" onclick="saveEvent()">Add to calendar</button>
+    <button class="btn ghost" onclick="closeSheet()">Cancel</button>
+    <div class="msg" id="ev_msg"></div>`;
+  $('detailSheet').classList.add('open');
+}
+async function saveEvent(){
+  const title=$('ev_title').value.trim(), date=$('ev_date').value, time=$('ev_time').value,
+        contractor=$('ev_con').value.trim(), notes=$('ev_notes').value.trim();
+  if(!title||!date){ msg('ev_msg','Enter a title and a date.','err'); return; }
+  $('ev_save').disabled=true; msg('ev_msg','Saving…','');
+  try{
+    const r=await fetch('/api/events',{method:'POST',headers:JHEAD(),body:JSON.stringify({title,date,time,contractor,notes})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    closeSheet(); await loadEvents(); render();
+  }catch(e){ msg('ev_msg',e.message,'err'); $('ev_save').disabled=false; }
+}
+function openEvent(rawId){
+  const e=manualEvents.find(x=>x.rawId===rawId); if(!e)return;
+  $('detailInner').innerHTML=`
+    <h2>📌 ${esc(e.name)}</h2>
+    <div class="detail-meta">
+      <span class="chip">🗓️ ${esc(e.visit)}</span>
+      ${e.contractorLabel?`<span class="chip">👤 ${esc(e.contractorLabel)}</span>`:''}
+      <span class="chip">Manual entry</span>
+    </div>
+    ${e.notes?`<label>Notes</label><div class="note-box">${esc(e.notes)}</div>`:''}
+    <button class="btn ghost" onclick="closeSheet()">Close</button>
+    ${me.role==='admin'?`<button class="btn danger" onclick="deleteEvent('${rawId}')">Delete entry</button>`:''}
+    <div class="msg" id="d_msg"></div>`;
+  $('detailSheet').classList.add('open');
+}
+async function deleteEvent(rawId){
+  if(!confirm('Delete this calendar entry?'))return;
+  try{ await fetch('/api/events/'+rawId,{method:'DELETE',headers:HEAD()}); }catch(e){}
+  closeSheet(); await loadEvents(); render();
+}
+async function updatePendingBadge(){
+  if(me.role!=='admin')return;
+  try{ const r=await fetch('/api/users',{headers:HEAD()}); if(!r.ok)return; const u=await r.json();
+    const n=u.filter(x=>x.role==='pending').length; const b=$('pendBadge');
+    if(b){ b.textContent=n; b.classList.toggle('hide',n===0); }
+  }catch(e){}
 }
 
 /* ---------- detail (shared) ---------- */
@@ -512,7 +579,7 @@ async function saveUser(id,btn){
   try{
     const r=await fetch('/api/users/'+id,{method:'POST',headers:JHEAD(),body:JSON.stringify({role,contractor})});
     const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
-    msg('usersMsg','Saved ✓','ok');
+    msg('usersMsg','Saved ✓','ok'); updatePendingBadge();
   }catch(e){ msg('usersMsg',e.message,'err'); }
   btn.disabled=false;
 }
