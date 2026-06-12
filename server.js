@@ -31,6 +31,41 @@ const COL = { address:'dropdown__1', visit:'dup__of_date_of_invoice__1', status:
 const WANT_GROUPS = ['Outstanding Calls','Visit Booked','Works in Progress'];
 const IMG = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(\?|$)/i;
 
+/* ---------- timezone handling for Monday date columns ----------
+   Monday stores date-column times in UTC and shows them in the account's
+   timezone. The app's users type local time, so we convert both ways. */
+const APP_TZ = process.env.APP_TZ || 'Europe/London';
+const _pad = n => String(n).padStart(2,'0');
+function _tzOffsetMs(tz, dateUtc){
+  const dtf = new Intl.DateTimeFormat('en-GB',{ timeZone:tz, hourCycle:'h23',
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit' });
+  const p = dtf.formatToParts(dateUtc).reduce((a,x)=>{ if(x.type!=='literal') a[x.type]=x.value; return a; },{});
+  return Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second) - dateUtc.getTime();
+}
+// local wall-clock (APP_TZ) -> {date,time} in UTC to send to Monday
+function localToMonday(dateStr, timeStr){
+  let t = timeStr || '09:00';
+  if(t.length===5) t += ':00';
+  const [Y,M,D] = dateStr.split('-').map(Number);
+  const [h,mi,s] = t.split(':').map(Number);
+  const guess = new Date(Date.UTC(Y,M-1,D,h,mi,s||0));
+  const u = new Date(guess.getTime() - _tzOffsetMs(APP_TZ, guess));
+  return { date:`${u.getUTCFullYear()}-${_pad(u.getUTCMonth()+1)}-${_pad(u.getUTCDate())}`,
+           time:`${_pad(u.getUTCHours())}:${_pad(u.getUTCMinutes())}:${_pad(u.getUTCSeconds())}` };
+}
+// UTC {date,time} from Monday -> {date,time} wall-clock in APP_TZ for display
+function mondayToLocal(dateStr, timeStr){
+  let t = timeStr || '00:00';
+  if(t.length===5) t += ':00';
+  const [Y,M,D] = dateStr.split('-').map(Number);
+  const [h,mi,s] = t.split(':').map(Number);
+  const utc = new Date(Date.UTC(Y,M-1,D,h,mi,s||0));
+  const dtf = new Intl.DateTimeFormat('en-GB',{ timeZone:APP_TZ, hourCycle:'h23',
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
+  const p = dtf.formatToParts(utc).reduce((a,x)=>{ if(x.type!=='literal') a[x.type]=x.value; return a; },{});
+  return { date:`${p.year}-${p.month}-${p.day}`, time:`${p.hour}:${p.minute}` };
+}
+
 /* ---------- accounts (stored in the private FieldOps Users board) ---------- */
 const USER_BOARD_ID = process.env.USER_BOARD_ID || '5098399575';
 const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm', contractor:'text_mm477f06' };
@@ -113,7 +148,8 @@ async function getEvents(){
     { b:[EVENT_BOARD_ID] });
   return (d.boards[0].items_page.items||[]).map(it=>{
     const c={}; it.column_values.forEach(x=>c[x.id]=x);
-    let date=null, time=''; try{ const v=JSON.parse(c[ECOL.when]?.value||'null'); if(v){ date=v.date; time=v.time?v.time.slice(0,5):''; } }catch(e){}
+    let date=null, time=''; try{ const v=JSON.parse(c[ECOL.when]?.value||'null');
+      if(v&&v.date){ if(v.time){ const loc=mondayToLocal(v.date,v.time); date=loc.date; time=loc.time; } else { date=v.date; time=''; } } }catch(e){}
     return { id:it.id, title:it.name, date, time, contractor:c[ECOL.contractor]?.text||'', notes:c[ECOL.notes]?.text||'' };
   });
 }
@@ -131,7 +167,8 @@ function parseItem(it, board, grp){
   const cv = {}; (it.column_values||[]).forEach(c => cv[c.id]=c);
   const contractor = cv[board.contractor];
   let contractorIds = []; try { contractorIds = (JSON.parse(contractor?.value||'{}').ids)||[]; } catch(e){}
-  let visit = null; try { const v=JSON.parse(cv[COL.visit]?.value||'null'); if(v) visit=v.date+(v.time?(' '+v.time.slice(0,5)):''); } catch(e){}
+  let visit = null; try { const v=JSON.parse(cv[COL.visit]?.value||'null');
+    if(v&&v.date){ if(v.time){ const loc=mondayToLocal(v.date,v.time); visit=loc.date+' '+loc.time; } else visit=v.date; } } catch(e){}
   let evidenceIds = []; try { evidenceIds=(JSON.parse(cv[COL.evidence]?.value||'{}').files||[]).map(f=>String(f.assetId)); } catch(e){}
   const g = grp || it.group || {};
   const out = {
@@ -254,7 +291,7 @@ app.post('/api/events', requireAuth, requireAdmin, async (req,res)=>{
     const { title, date, time, contractor, notes } = req.body || {};
     if(!title || !date) return res.status(400).json({error:'Title and date are required'});
     const vals = {
-      [ECOL.when]: { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') },
+      [ECOL.when]: localToMonday(date, time),
       [ECOL.contractor]: contractor || '',
       [ECOL.notes]: notes || ''
     };
@@ -269,7 +306,7 @@ app.put('/api/events/:id', requireAuth, requireAdmin, async (req,res)=>{
     if(!title || !date) return res.status(400).json({error:'Title and date are required'});
     const vals = {
       name: String(title),
-      [ECOL.when]: { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') },
+      [ECOL.when]: localToMonday(date, time),
       [ECOL.contractor]: contractor || '',
       [ECOL.notes]: notes || ''
     };
@@ -345,7 +382,7 @@ app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
     const board = BOARDS.find(b=>b.id===String(boardId)) || BOARDS[0];
     const vals = {};
     if(contractorId) vals[board.contractor] = { ids:[Number(contractorId)] };
-    if(date)         vals[COL.visit]        = { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') };
+    if(date)         vals[COL.visit]        = localToMonday(date, time);  // local -> UTC for Monday
     await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
       { b:board.id, i:req.params.id, v:JSON.stringify(vals) });
     // scheduling a visit moves the job into the "Visit Booked" group on Monday
