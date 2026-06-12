@@ -27,7 +27,7 @@ const BOARDS = [
   { id: process.env.PRIVATE_BOARD_ID || '1733859650', name: 'Private', contractor: process.env.PRIVATE_CONTRACTOR || 'dropdown_mkznxc22' },
 ];
 const COL = { address:'dropdown__1', visit:'dup__of_date_of_invoice__1', status:'dup__of_payment_status__1',
-              desc:'long_text__1', jobtype:'type__1', evidence:'dup__of_files__1' };
+              desc:'long_text__1', jobtype:'type__1', evidence:'dup__of_files__1', invoice:'upload_file__1' };
 const WANT_GROUPS = ['Outstanding Calls','Visit Booked','Works in Progress'];
 const IMG = /\.(jpe?g|png|gif|webp|heic|heif|bmp)(\?|$)/i;
 
@@ -158,8 +158,9 @@ async function getEvents(){
 function itemFields(board, withAssets){
   return `id name
     ${withAssets ? 'assets { id name public_url }' : ''}
+    ${withAssets ? 'updates(limit:30){ id text_body created_at creator{ name } }' : ''}
     group { id title color }
-    column_values(ids:["${COL.address}","${board.contractor}","${COL.visit}","${COL.status}","${COL.desc}","${COL.jobtype}","${COL.evidence}"]) {
+    column_values(ids:["${COL.address}","${board.contractor}","${COL.visit}","${COL.status}","${COL.desc}","${COL.jobtype}","${COL.evidence}","${COL.invoice}"]) {
       id text value ... on StatusValue { label_style { color } }
     }`;
 }
@@ -170,6 +171,7 @@ function parseItem(it, board, grp){
   let visit = null; try { const v=JSON.parse(cv[COL.visit]?.value||'null');
     if(v&&v.date){ if(v.time){ const loc=mondayToLocal(v.date,v.time); visit=loc.date+' '+loc.time; } else visit=v.date; } } catch(e){}
   let evidenceIds = []; try { evidenceIds=(JSON.parse(cv[COL.evidence]?.value||'{}').files||[]).map(f=>String(f.assetId)); } catch(e){}
+  let invoiceIds = []; try { invoiceIds=(JSON.parse(cv[COL.invoice]?.value||'{}').files||[]).map(f=>String(f.assetId)); } catch(e){}
   const g = grp || it.group || {};
   const out = {
     id: it.id, boardId: board.id, board: board.name,
@@ -186,8 +188,13 @@ function parseItem(it, board, grp){
     photoCount: evidenceIds.length
   };
   if (it.assets){
-    out.photos = it.assets.filter(a=>evidenceIds.includes(String(a.id)))
-      .map(a=>({ id:a.id, name:a.name, url:a.public_url, isImage: IMG.test(a.name||'') || IMG.test(a.public_url||'') }));
+    const mk=a=>({ id:a.id, name:a.name, url:a.public_url, isImage: IMG.test(a.name||'') || IMG.test(a.public_url||'') });
+    out.photos   = it.assets.filter(a=>evidenceIds.includes(String(a.id))).map(mk);
+    out.invoices = it.assets.filter(a=>invoiceIds.includes(String(a.id))).map(mk);
+  }
+  if (it.updates){
+    out.notesLog = it.updates.map(u=>({ text:u.text_body||'', at:u.created_at, by:(u.creator&&u.creator.name)||'' }))
+      .filter(n=>n.text.trim());
   }
   return out;
 }
@@ -382,8 +389,11 @@ app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
     const board = BOARDS.find(b=>b.id===String(boardId)) || BOARDS[0];
     const vals = {};
     if(contractorId) vals[board.contractor] = { ids:[Number(contractorId)] };
-    if(date)         vals[COL.visit]        = localToMonday(date, time);  // local -> UTC for Monday
-    await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
+    if(date){
+      vals[COL.visit]  = localToMonday(date, time);   // local -> UTC for Monday
+      vals[COL.status] = { label:'Visit Booked' };    // set Works Status to Visit Booked
+    }
+    await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:true){ id } }`,
       { b:board.id, i:req.params.id, v:JSON.stringify(vals) });
     // scheduling a visit moves the job into the "Visit Booked" group on Monday
     if(date){
@@ -409,25 +419,57 @@ app.post('/api/jobs/:id/complete', requireAuth, async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
+// check an operative is assigned to a job (for write actions)
+async function operativeOwnsJob(me, board, itemId){
+  if(me.role!=='operative') return true;
+  const d = await gql(`query($id:[ID!]){ items(ids:$id){ column_values(ids:["${board.contractor}"]){ text } } }`, { id:[itemId] });
+  const text = d.items[0]?.column_values[0]?.text || '';
+  return norm(text)===norm(me.contractorLabel);
+}
+// upload a file to a given file column (used by photo + invoice)
+async function uploadToColumn(itemId, columnId, file){
+  const q = `mutation($file:File!){ add_file_to_column(item_id:${Number(itemId)}, column_id:"${columnId}", file:$file){ id } }`;
+  const form = new FormData();
+  form.append('query', q);
+  form.append('map', JSON.stringify({ image:'variables.file' }));
+  form.append('image', new Blob([file.buffer], { type:file.mimetype || 'application/octet-stream' }), file.originalname || 'upload');
+  const r = await fetch(API + '/file', { method:'POST', headers:{ Authorization: MONDAY_TOKEN }, body: form });
+  const j = await r.json();
+  if(j.errors) throw new Error(j.errors.map(e=>e.message).join('; '));
+  return j.data?.add_file_to_column?.id;
+}
+
 // upload a photo to the Evidence column (admin or assigned operative)
 app.post('/api/jobs/:id/photo', requireAuth, upload.single('photo'), async (req,res)=>{
   try{
     if(!req.file) return res.status(400).json({error:'No file'});
     const board = BOARDS.find(b=>b.id===String(req.body.boardId)) || BOARDS[0];
-    if(req.me.role==='operative'){
-      const d = await gql(`query($id:[ID!]){ items(ids:$id){ column_values(ids:["${board.contractor}"]){ text } } }`, { id:[req.params.id] });
-      const text = d.items[0]?.column_values[0]?.text || '';
-      if(norm(text)!==norm(req.me.contractorLabel)) return res.status(403).json({error:'Not your job'});
-    }
-    const q = `mutation($file:File!){ add_file_to_column(item_id:${Number(req.params.id)}, column_id:"${COL.evidence}", file:$file){ id } }`;
-    const form = new FormData();
-    form.append('query', q);
-    form.append('map', JSON.stringify({ image:'variables.file' }));
-    form.append('image', new Blob([req.file.buffer], { type:req.file.mimetype || 'image/jpeg' }), req.file.originalname || 'photo.jpg');
-    const r = await fetch(API + '/file', { method:'POST', headers:{ Authorization: MONDAY_TOKEN }, body: form });
-    const j = await r.json();
-    if(j.errors) throw new Error(j.errors.map(e=>e.message).join('; '));
-    res.json({ ok:true, assetId: j.data?.add_file_to_column?.id });
+    if(!(await operativeOwnsJob(req.me, board, req.params.id))) return res.status(403).json({error:'Not your job'});
+    const assetId = await uploadToColumn(req.params.id, COL.evidence, req.file);
+    res.json({ ok:true, assetId });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// upload an invoice to the Invoice column (admin or assigned operative)
+app.post('/api/jobs/:id/invoice', requireAuth, upload.single('file'), async (req,res)=>{
+  try{
+    if(!req.file) return res.status(400).json({error:'No file'});
+    const board = BOARDS.find(b=>b.id===String(req.body.boardId)) || BOARDS[0];
+    if(!(await operativeOwnsJob(req.me, board, req.params.id))) return res.status(403).json({error:'Not your job'});
+    const assetId = await uploadToColumn(req.params.id, COL.invoice, req.file);
+    res.json({ ok:true, assetId });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// add a note (posted to the job's Updates feed on Monday)
+app.post('/api/jobs/:id/note', requireAuth, async (req,res)=>{
+  try{
+    const { boardId, text } = req.body || {};
+    if(!text || !String(text).trim()) return res.status(400).json({error:'Note is empty'});
+    const board = BOARDS.find(b=>b.id===String(boardId)) || BOARDS[0];
+    if(!(await operativeOwnsJob(req.me, board, req.params.id))) return res.status(403).json({error:'Not your job'});
+    await gql(`mutation($i:ID!,$b:String!){ create_update(item_id:$i, body:$b){ id } }`, { i:req.params.id, b:String(text) });
+    res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
