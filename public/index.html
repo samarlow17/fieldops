@@ -186,6 +186,7 @@
 <div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
 <datalist id="contractorList"></datalist>
 <input type="file" id="fileInput" accept="image/*" multiple capture="environment">
+<input type="file" id="invoiceInput" accept=".pdf,image/*" multiple>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -194,7 +195,7 @@ const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}}
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
 let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH', manualEvents=[];
-let view='board', photoTarget=null, collapsed={}, authM='in';
+let view='board', photoTarget=null, invoiceTarget=null, collapsed={}, authM='in';
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'Authorization':'Bearer '+token});
 const JHEAD=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
@@ -506,6 +507,12 @@ function renderDetail(j){
   const photos=(j.photos||[]).map(p=> p.isImage
     ? `<img src="${p.url}" onclick="lightOpen('${p.url}')">`
     : `<a class="file" href="${p.url}" target="_blank">📄 ${esc(p.name||'file')}</a>`).join('');
+  const invoices=(j.invoices||[]).map(p=> p.isImage
+    ? `<img src="${p.url}" onclick="lightOpen('${p.url}')">`
+    : `<a class="file" href="${p.url}" target="_blank">🧾 ${esc(p.name||'invoice')}</a>`).join('');
+  const notesHtml=(j.notesLog||[]).length
+    ? j.notesLog.map(n=>`<div class="note-box" style="margin-bottom:6px">${esc(n.text)}<div style="color:var(--muted);font-size:11px;margin-top:5px">${esc(n.by||'')}${n.at?(' · '+new Date(n.at).toLocaleString()):''}</div></div>`).join('')
+    : '<div class="muted" style="font-size:13px">No notes yet.</div>';
   $('detailInner').innerHTML=`
     <h2>${esc(j.name)}</h2>
     <div class="detail-meta">
@@ -519,13 +526,31 @@ function renderDetail(j){
     ${assign}
     <label>Photos (Evidence)</label>
     <div class="photo-grid" id="pgrid">${photos}<div class="add" id="addPhoto">📷<span>Add</span></div></div>
+    <label>Invoice</label>
+    <div class="photo-grid" id="invgrid">${invoices}<div class="add" id="addInvoice">🧾<span>Add</span></div></div>
+    <label>Notes</label>
+    <div id="notesList">${notesHtml}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input id="noteInput" placeholder="Add a note…" style="flex:1">
+      <button class="btn" style="margin-top:0;width:auto;padding:11px 16px" onclick="addNote('${j.id}','${j.boardId}')">Add</button>
+    </div>
     ${(j.status||'').toLowerCase()==='done'
       ? `<div class="chip" style="margin-top:14px;background:#eafaf0;border-color:#b6e6c8;color:#1f8b4c">✅ Marked complete</div>`
       : `<button class="btn" style="background:#00c875" onclick="markComplete('${j.id}','${j.boardId}')">✅ Mark complete</button>`}
     <button class="btn ghost" onclick="closeSheet()">Close</button>
     <div class="msg" id="d_msg"></div>`;
   $('addPhoto').onclick=()=>{photoTarget={id:j.id,boardId:j.boardId};$('fileInput').value='';$('fileInput').click();};
+  $('addInvoice').onclick=()=>{invoiceTarget={id:j.id,boardId:j.boardId};$('invoiceInput').value='';$('invoiceInput').click();};
   if(isAdmin) $('d_save').onclick=()=>saveAssign(j);
+}
+async function addNote(id,boardId){
+  const inp=$('noteInput'); const text=(inp.value||'').trim(); if(!text)return;
+  inp.disabled=true; msg('d_msg','Saving note…','');
+  try{
+    const r=await fetch('/api/jobs/'+id+'/note',{method:'POST',headers:JHEAD(),body:JSON.stringify({boardId,text})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    const r2=await fetch('/api/jobs/'+id+'?board='+boardId,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
+  }catch(e){ msg('d_msg',e.message,'err'); inp.disabled=false; }
 }
 async function markComplete(id,boardId){
   if(!confirm('Mark this job as complete? (Sets Works Status to "Done" on Monday.)'))return;
@@ -561,6 +586,18 @@ $('fileInput').addEventListener('change',async e=>{
     if(!r.ok){const d=await r.json().catch(()=>({}));msg('d_msg','Upload failed: '+(d.error||r.status),'err');return;}
   }
   msg('d_msg','Photos uploaded to Monday ✓','ok');
+  const r2=await fetch(`/api/jobs/${t.id}?board=${t.boardId}`,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
+  loadJobs();
+});
+$('invoiceInput').addEventListener('change',async e=>{
+  const t=invoiceTarget, files=[...e.target.files]; if(!files.length||!t)return;
+  msg('d_msg',`Uploading invoice…`,'');
+  for(const file of files){
+    const fd=new FormData(); fd.append('file',file,file.name||'invoice'); fd.append('boardId',t.boardId);
+    const r=await fetch(`/api/jobs/${t.id}/invoice`,{method:'POST',headers:HEAD(),body:fd});
+    if(!r.ok){const d=await r.json().catch(()=>({}));msg('d_msg','Upload failed: '+(d.error||r.status),'err');return;}
+  }
+  msg('d_msg','Invoice uploaded to Monday ✓','ok');
   const r2=await fetch(`/api/jobs/${t.id}?board=${t.boardId}`,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
   loadJobs();
 });
