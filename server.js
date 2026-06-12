@@ -42,7 +42,7 @@ const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm4
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'Southend78781',
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
   name: 'Sam'
 };
 
@@ -331,7 +331,14 @@ app.get('/api/jobs/:id', requireAuth, async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// admin: assign contractor + scheduled visit
+// find the "Visit Booked" group id on a board (ids differ per board)
+async function visitBookedGroupId(board){
+  const d = await gql(`query($b:[ID!]){ boards(ids:$b){ groups{ id title } } }`, { b:[board.id] });
+  const g = (d.boards[0].groups||[]).find(x=>x.title==='Visit Booked');
+  return g ? g.id : null;
+}
+
+// admin: assign contractor + scheduled visit (and move into the Visit Booked section)
 app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
   try{
     const { boardId, contractorId, date, time } = req.body;
@@ -341,6 +348,11 @@ app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
     if(date)         vals[COL.visit]        = { date, time: (time? (time.length===5? time+':00':time) : '09:00:00') };
     await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
       { b:board.id, i:req.params.id, v:JSON.stringify(vals) });
+    // scheduling a visit moves the job into the "Visit Booked" group on Monday
+    if(date){
+      const gid = await visitBookedGroupId(board);
+      if(gid) await gql(`mutation($i:ID!,$g:String!){ move_item_to_group(item_id:$i, group_id:$g){ id } }`, { i:req.params.id, g:gid });
+    }
     res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });
