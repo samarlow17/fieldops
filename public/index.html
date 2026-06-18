@@ -207,7 +207,7 @@ const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}}
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
 let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH', manualEvents=[];
-let view='board', photoTarget=null, invoiceTarget=null, collapsed={}, authM='in';
+let view='board', photoTarget=null, invoiceTarget=null, collapsed={}, authM='in', holidayItems=[];
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'Authorization':'Bearer '+token});
 const JHEAD=()=>({'Authorization':'Bearer '+token,'Content-Type':'application/json'});
@@ -284,8 +284,25 @@ async function loadJobs(){
   try{
     const r=await fetch('/api/jobs',{headers:HEAD()});
     if(r.status===401){store.del('fo_token');store.del('fo_me');location.reload();return;}
-    const d=await r.json(); sections=d.sections||[]; await loadEvents(); render();
+    const d=await r.json(); sections=d.sections||[]; await loadEvents(); await loadHolidaysCal(); render();
   }catch(e){ $('board').innerHTML='<div class="empty">Could not load jobs.<br>'+esc(e.message)+'</div>'; }
+}
+async function loadHolidaysCal(){
+  try{
+    const r=await fetch('/api/holidays',{headers:HEAD()}); if(!r.ok){holidayItems=[];return;}
+    const d=await r.json();
+    const reqs=(d.requests||[]).filter(h=>(h.status||'').toLowerCase()==='approved' && h.start && h.end);
+    const items=[];
+    reqs.forEach(h=>{
+      const d0=new Date(h.start+'T00:00:00'), d1=new Date(h.end+'T00:00:00');
+      for(let dt=new Date(d0); dt<=d1; dt.setDate(dt.getDate()+1)){
+        const wd=dt.getDay(); if(wd===0||wd===6) continue; // weekdays only
+        const ds=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+        items.push({ id:'hol-'+h.id+'-'+ds, isHoliday:true, who:h.name||'', name:(h.name||'')+' — Holiday', visit:ds, contractorLabel:h.name||'', groupColor:'#00a3bf' });
+      }
+    });
+    holidayItems=items;
+  }catch(e){ holidayItems=[]; }
 }
 async function loadEvents(){
   try{ const r=await fetch('/api/events',{headers:HEAD()}); const arr=r.ok?await r.json():[];
@@ -331,11 +348,24 @@ function renderBoard(){
 function toggle(k){ collapsed[k]=!collapsed[k]; renderBoard(); }
 
 /* ---------- calendar view ---------- */
+function isPastDate(visit){
+  if(!visit) return false;
+  const d=visit.split(' ')[0], t=new Date();
+  const today=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  return d < today;
+}
+function calColor(j){
+  if(j.isHoliday) return '#2f6fed';                       // holiday = blue
+  if(j.isManual)  return isPastDate(j.visit)?'#e2445c':'#00c875';
+  const done=(j.status||'').toLowerCase()==='done';
+  if(!done && isPastDate(j.visit)) return '#e2445c';      // overdue job = red
+  return '#00c875';                                        // job = green
+}
 function scheduledJobs(){
   // both boards' scheduled jobs + manual calendar entries
   let jobs=sections.flatMap(s=>s.jobs).filter(j=>j.visit).concat(manualEvents);
   if(me.role==='admin' && contractorSel) jobs=jobs.filter(j=>contractorSel.has(j.contractorLabel||'Unassigned'));
-  return jobs;
+  return jobs.concat(holidayItems); // approved holidays always shown on the calendar
 }
 function renderCalendar(){
   const y=calRef.getFullYear(), m=calRef.getMonth();
@@ -369,8 +399,10 @@ function renderCalendar(){
     const list=byDay[ds]||[];
     const shown=list.slice(0,3).map(j=>{
       const t=(j.visit.split(' ')[1]||'');
-      const click=j.isManual?`openEvent('${j.rawId}')`:`openDetail('${j.id}','${j.boardId}')`;
-      return `<div class="evt" style="background:${esc(j.groupColor||'#0073ea')}" title="${esc(j.name)}" onclick="event.stopPropagation();${click}">${j.isManual?'📌 ':''}${t?esc(t)+' ':''}${esc(j.contractorLabel||j.name)}</div>`;
+      const click=j.isHoliday?'openHolidays()':(j.isManual?`openEvent('${j.rawId}')`:`openDetail('${j.id}','${j.boardId}')`);
+      const pre=j.isHoliday?'🏖️ ':(j.isManual?'📌 ':'');
+      const label=j.isHoliday?esc(j.who||j.name):(t?esc(t)+' ':'')+esc(j.contractorLabel||j.name);
+      return `<div class="evt" style="background:${esc(calColor(j))}" title="${esc(j.name)}" onclick="event.stopPropagation();${click}">${pre}${label}</div>`;
     }).join('');
     const more=list.length>3?`<div class="evtmore">+${list.length-3} more</div>`:'';
     cells+=`<div class="day ${out?'out':''} ${isToday(d)?'today':''}" onclick="openDay('${ds}')">
@@ -388,6 +420,11 @@ function renderCalendar(){
     <div class="grid">
       ${WD.map(w=>`<div class="gridhead">${w}</div>`).join('')}
       ${cells}
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:10px 2px 0;font-size:12px;color:var(--muted)">
+      <span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:#00c875"></span> Job</span>
+      <span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:#2f6fed"></span> Holiday</span>
+      <span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:#e2445c"></span> Overdue (past, not complete)</span>
     </div>
     <div class="daypanel" id="daypanel"></div>`;
   if(me.role==='admin'){
@@ -423,10 +460,17 @@ function openDay(ds){
   const head=`<h3>${WD[(d.getDay()+6)%7]} ${d.getDate()} ${MONTHS[d.getMonth()]}</h3>`;
   if(!jobs.length){ p.innerHTML=head+'<div class="muted" style="font-size:14px">No visits scheduled.</div>'; return; }
   p.innerHTML=head+jobs.map(j=>{
+    if(j.isHoliday){
+      return `<div class="dayjob" style="--gc:${esc(calColor(j))}" onclick="openHolidays()">
+        <div class="t">🏖️</div>
+        <div><div class="nm">${esc(j.who||j.name)}</div><div class="sub">Holiday</div></div>
+      </div>`;
+    }
     const click=j.isManual?`openEvent('${j.rawId}')`:`openDetail('${j.id}','${j.boardId}')`;
-    return `<div class="dayjob" style="--gc:${esc(j.groupColor||'#c4c4c4')}" onclick="${click}">
+    const overdue=!j.isManual && (j.status||'').toLowerCase()!=='done' && isPastDate(j.visit);
+    return `<div class="dayjob" style="--gc:${esc(calColor(j))}" onclick="${click}">
       <div class="t">${esc(j.visit.split(' ')[1]||'')}</div>
-      <div><div class="nm">${j.isManual?'📌 ':''}${esc(j.name)}</div>
+      <div><div class="nm">${j.isManual?'📌 ':''}${esc(j.name)}${overdue?' <span style="color:#e2445c;font-size:12px">⚠️ overdue</span>':''}</div>
         <div class="sub">${j.isManual?'Manual entry':esc(j.board)} · ${esc(j.contractorLabel||'Unassigned')}${j.address?' · '+esc(j.address):''}</div></div>
     </div>`;}).join('');
 }
