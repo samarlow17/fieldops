@@ -416,6 +416,44 @@ app.delete('/api/events/:id', requireAuth, requireAdmin, async (req,res)=>{
   catch(e){ res.status(500).json({error:e.message}); }
 });
 
+// address options per board (admin) — from the Address dropdown column
+app.get('/api/addresses', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const result = {};
+    for(const board of BOARDS){
+      const d = await gql(`query($b:[ID!]){ boards(ids:$b){ columns(ids:["${COL.address}"]){ settings_str } } }`, { b:[board.id] });
+      const s = JSON.parse(d.boards[0].columns[0].settings_str || '{}');
+      const dead = new Set(s.deactivated_labels || []);
+      result[board.id] = (s.labels||[]).filter(l=>!dead.has(l.id)).map(l=>({ id:l.id, label:l.label||l.name }))
+        .sort((a,b)=>a.label.localeCompare(b.label));
+    }
+    res.json(result);
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// admin: create a real job on a maintenance board (from the calendar "Add")
+app.post('/api/jobs/create', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const { boardId, title, addressId, date, time, contractorId, notes } = req.body || {};
+    const board = BOARDS.find(b=>b.id===String(boardId));
+    if(!board) return res.status(400).json({error:'Unknown board'});
+    if(!title || !String(title).trim()) return res.status(400).json({error:'Title is required'});
+    const vals = {};
+    if(addressId)    vals[COL.address]      = { ids:[Number(addressId)] };
+    if(contractorId) vals[board.contractor] = { ids:[Number(contractorId)] };
+    if(notes)        vals[COL.desc]         = { text:String(notes) };
+    if(date){ vals[COL.visit] = localToMonday(date, time); vals[COL.status] = { label:'Visit Booked' }; }
+    const gid = await groupIdByTitle(board, date ? 'Visit Booked' : 'Outstanding Calls');
+    const q = gid
+      ? `mutation($b:ID!,$g:String!,$n:String!,$v:JSON!){ create_item(board_id:$b,group_id:$g,item_name:$n,column_values:$v,create_labels_if_missing:true){ id } }`
+      : `mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v,create_labels_if_missing:true){ id } }`;
+    const vars = gid ? { b:board.id, g:gid, n:String(title), v:JSON.stringify(vals) }
+                     : { b:board.id, n:String(title), v:JSON.stringify(vals) };
+    await gql(q, vars);
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
 // contractor options per board (admin)
 app.get('/api/contractors', requireAuth, requireAdmin, async (req,res)=>{
   try{

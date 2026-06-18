@@ -197,6 +197,7 @@
 <div class="sheet" id="holSheet"><div class="sheet-inner" id="holInner"></div></div>
 <div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
 <datalist id="contractorList"></datalist>
+<datalist id="addrList"></datalist>
 <input type="file" id="fileInput" accept="image/*" multiple>
 <input type="file" id="invoiceInput" accept=".pdf,image/*" multiple>
 
@@ -206,7 +207,7 @@ const $=id=>document.getElementById(id);
 const store={get:k=>{try{return sessionStorage.getItem(k)}catch(e){return null}},
   set:(k,v)=>{try{sessionStorage.setItem(k,v)}catch(e){}},
   del:k=>{try{sessionStorage.removeItem(k)}catch(e){}}};
-let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, boardFilter='CCH', manualEvents=[];
+let me=null, token=store.get('fo_token')||'', sections=[], contractors={}, addresses={}, boardFilter='CCH', manualEvents=[];
 let view='board', photoTarget=null, invoiceTarget=null, collapsed={}, authM='in', holidayItems=[];
 let calRef=new Date(), calSelDay=null, contractorSel=null; // null = all
 const HEAD=()=>({'Authorization':'Bearer '+token});
@@ -275,10 +276,11 @@ function startApp(){
   $('refresh').onclick=loadJobs;
   $('usersBtn').classList.toggle('hide', me.role!=='admin');
   $('holBtn').classList.toggle('hide', !(me.role==='admin' || Number(me.allowance)>0));
-  if(me.role==='admin'){ loadContractors(); updatePendingBadge(); }
+  if(me.role==='admin'){ loadContractors(); loadAddresses(); updatePendingBadge(); }
   loadJobs();
 }
 async function loadContractors(){ try{const r=await fetch('/api/contractors',{headers:HEAD()});contractors=r.ok?await r.json():{};}catch(e){} }
+async function loadAddresses(){ try{const r=await fetch('/api/addresses',{headers:HEAD()});addresses=r.ok?await r.json():{};}catch(e){} }
 async function loadJobs(){
   $('board').innerHTML='<div class="loading"><span class="spin"></span> Loading…</div>';
   try{
@@ -479,29 +481,62 @@ function openDay(ds){
 function openAddEvent(){ openEventForm(null); }
 function openEditEvent(rawId){ openEventForm(manualEvents.find(x=>x.rawId===rawId)||null); }
 function openEventForm(ev){
-  const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort((a,b)=>a.localeCompare(b));
-  $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+  const isEdit=!!ev;
+  const boardOpts=[...new Map(sections.map(s=>[s.boardId,s.board])).entries()];
+  const allNames=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort((a,b)=>a.localeCompare(b));
+  $('contractorList').innerHTML=allNames.map(n=>`<option value="${esc(n)}">`).join('');
   const date=ev&&ev.visit?ev.visit.split(' ')[0]:'';
   const time=ev&&ev.visit&&ev.visit.split(' ')[1]?ev.visit.split(' ')[1]:'';
+  const dest = isEdit ? '' : `
+    <label>Add as</label>
+    <select id="ev_dest" onchange="evDestChange()">
+      <option value="manual">Calendar note (van, meeting, etc.)</option>
+      ${boardOpts.map(([id,nm])=>`<option value="board:${id}">Real job on ${esc(nm)} board</option>`).join('')}
+    </select>`;
   $('detailInner').innerHTML=`
-    <h2>${ev?'Edit calendar entry':'Add to calendar'}</h2>
-    <p style="color:var(--muted);font-size:13px;margin:2px 0 8px">For something that isn't on the Monday boards.</p>
-    <label>Title</label><input id="ev_title" placeholder="e.g. Van service, site meeting" value="${ev?esc(ev.name):''}">
+    <h2>${isEdit?'Edit calendar entry':'Add to calendar'}</h2>
+    ${dest}
+    <label>Title</label><input id="ev_title" placeholder="e.g. Leak at 14 Oak St / Van service" value="${ev?esc(ev.name):''}">
+    <div id="ev_addrwrap" class="hide"><label>Address</label><input id="ev_addr" list="addrList" placeholder="Start typing an address"></div>
     <div class="row2"><div><label>Date</label><input id="ev_date" type="date" value="${date}"></div><div><label>Time</label><input id="ev_time" type="time" value="${time}"></div></div>
-    <label>Contractor (optional — who it's for)</label><input id="ev_con" list="contractorList" placeholder="Leave blank for everyone" value="${ev?esc(ev.contractorLabel):''}">
+    <label id="ev_conlabel">Contractor (optional — who it's for)</label><input id="ev_con" list="contractorList" placeholder="Leave blank for everyone" value="${ev?esc(ev.contractorLabel):''}">
     <label>Notes (optional)</label><input id="ev_notes" placeholder="Any details" value="${ev?esc(ev.notes):''}">
-    <button class="btn" id="ev_save" data-edit="${ev?ev.rawId:''}" onclick="saveEvent()">${ev?'Save changes':'Add to calendar'}</button>
+    <button class="btn" id="ev_save" data-edit="${ev?ev.rawId:''}" onclick="saveEvent()">${isEdit?'Save changes':'Add'}</button>
     <button class="btn ghost" onclick="closeSheet()">Cancel</button>
     <div class="msg" id="ev_msg"></div>`;
   $('detailSheet').classList.add('open');
 }
+function evDestChange(){
+  const dest=$('ev_dest').value, isBoard=dest.startsWith('board:');
+  $('ev_addrwrap').classList.toggle('hide',!isBoard);
+  if(isBoard){
+    const bid=dest.slice(6);
+    $('addrList').innerHTML=(addresses[bid]||[]).map(a=>`<option value="${esc(a.label)}">`).join('');
+    $('contractorList').innerHTML=(contractors[bid]||[]).map(c=>`<option value="${esc(c.label)}">`).join('');
+    $('ev_conlabel').textContent='Contractor (optional)';
+  } else {
+    const names=[...new Set(Object.values(contractors).flat().map(c=>c.label))].sort((a,b)=>a.localeCompare(b));
+    $('contractorList').innerHTML=names.map(n=>`<option value="${esc(n)}">`).join('');
+    $('ev_conlabel').textContent="Contractor (optional — who it's for)";
+  }
+}
 async function saveEvent(){
   const editId=$('ev_save').dataset.edit;
+  const dest = $('ev_dest') ? $('ev_dest').value : 'manual';
   const title=$('ev_title').value.trim(), date=$('ev_date').value, time=$('ev_time').value,
         contractor=$('ev_con').value.trim(), notes=$('ev_notes').value.trim();
   if(!title||!date){ msg('ev_msg','Enter a title and a date.','err'); return; }
   $('ev_save').disabled=true; msg('ev_msg','Saving…','');
   try{
+    if(dest.startsWith('board:')){
+      const bid=dest.slice(6);
+      const a=(addresses[bid]||[]).find(x=>x.label===$('ev_addr').value.trim());
+      const c=(contractors[bid]||[]).find(x=>x.label===contractor);
+      const r=await fetch('/api/jobs/create',{method:'POST',headers:JHEAD(),
+        body:JSON.stringify({boardId:bid,title,addressId:a?a.id:null,date,time,contractorId:c?c.id:null,notes})});
+      const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+      closeSheet(); await loadJobs(); render(); return;
+    }
     const url = editId ? '/api/events/'+editId : '/api/events';
     const r=await fetch(url,{method: editId?'PUT':'POST',headers:JHEAD(),body:JSON.stringify({title,date,time,contractor,notes})});
     const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
