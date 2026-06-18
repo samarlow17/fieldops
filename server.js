@@ -333,11 +333,21 @@ app.post('/api/holidays', requireAuth, async (req,res)=>{
   try{
     const { start, end, notes } = req.body || {};
     if(!start || !end) return res.status(400).json({error:'Start and end dates are required'});
-    const days = workingDays(start, end);
-    if(days < 1) return res.status(400).json({error:'That range has no working days'});
-    const vals = { [HCOL.email]:req.me.email, [HCOL.start]:{date:start}, [HCOL.end]:{date:end}, [HCOL.days]:days, [HCOL.status]:'Pending', [HCOL.notes]:notes||'' };
+    // default: employee requesting for themselves -> Pending, working days computed
+    let targetEmail = req.me.email, targetName = req.me.name || req.me.email, status = 'Pending', days = workingDays(start, end);
+    // admin may log/record a holiday for someone else (e.g. already taken) -> Approved, optional day override
+    if(req.me.role==='admin' && req.body.email){
+      targetEmail = norm(req.body.email);
+      const map = { approved:'Approved', pending:'Pending', declined:'Declined' };
+      status = map[String(req.body.status||'approved').toLowerCase()] || 'Approved';
+      if(req.body.days!=null && req.body.days!=='' && !isNaN(Number(req.body.days))) days = Number(req.body.days);
+      const users = await getBoardUsers(); const u = users.find(x=>x.email===targetEmail);
+      targetName = u ? u.name : targetEmail;
+    }
+    if(days < 0.5) return res.status(400).json({error:'That range has no working days'});
+    const vals = { [HCOL.email]:targetEmail, [HCOL.start]:{date:start}, [HCOL.end]:{date:end}, [HCOL.days]:days, [HCOL.status]:status, [HCOL.notes]:notes||'' };
     await gql(`mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v){ id } }`,
-      { b:HOLIDAY_BOARD_ID, n:(req.me.name||req.me.email), v:JSON.stringify(vals) });
+      { b:HOLIDAY_BOARD_ID, n:targetName, v:JSON.stringify(vals) });
     res.json({ ok:true, days });
   }catch(e){ res.status(500).json({error:e.message}); }
 });

@@ -712,13 +712,18 @@ async function openHolidays(){
 function holRow(h, admin){
   const col={approved:'#2ecc71',declined:'#e2445c',pending:'#f5a623'}[h.status.toLowerCase()]||'#999';
   const lc=h.status.toLowerCase();
+  let actions='';
+  if(admin){
+    if(lc==='pending') actions+=`<button class="usave" style="background:#2ecc71" onclick="decideHoliday('${h.id}','approved')">Approve</button><button class="ureset" onclick="decideHoliday('${h.id}','declined')">Decline</button>`;
+    actions+=`<button class="ureset" onclick="removeHoliday('${h.id}',true)">Remove</button>`;
+  } else if(lc==='pending'){
+    actions=`<button class="ureset" onclick="removeHoliday('${h.id}',false)">Cancel</button>`;
+  }
   return `<div class="urow" style="flex-wrap:wrap">
     <div class="uinfo"><div class="uname">${admin?esc(h.name)+' · ':''}${esc(h.start)} → ${esc(h.end)}</div>
       <div class="uemail">${h.days} day(s)${h.notes?(' · '+esc(h.notes)):''}</div></div>
     <span class="pill" style="background:${col};min-width:74px">${esc(h.status)}</span>
-    ${admin && lc==='pending'
-      ? `<button class="usave" style="background:#2ecc71" onclick="decideHoliday('${h.id}','approved')">Approve</button><button class="ureset" onclick="decideHoliday('${h.id}','declined')">Decline</button>`
-      : (lc==='pending' && !admin ? `<button class="ureset" onclick="cancelHoliday('${h.id}')">Cancel</button>` : '')}
+    ${actions}
   </div>`;
 }
 function renderHolidays(d){
@@ -727,6 +732,12 @@ function renderHolidays(d){
     const others=(d.requests||[]).filter(h=>h.status.toLowerCase()!=='pending');
     $('holInner').innerHTML=`
       <h2>Holidays</h2>
+      <label>Log holiday already taken (counts as used)</label>
+      <select id="ah_person"><option value="">— Choose person —</option>${(d.people||[]).map(p=>`<option value="${esc(p.email)}">${esc(p.name)}</option>`).join('')}</select>
+      <div class="row2"><div><label>From</label><input id="ah_start" type="date" oninput="ahPreview()"></div><div><label>To</label><input id="ah_end" type="date" oninput="ahPreview()"></div></div>
+      <div class="row2"><div><label>Days</label><input id="ah_days" type="number" min="0" step="0.5"></div><div><label>Notes</label><input id="ah_notes" placeholder="optional"></div></div>
+      <button class="btn" id="ah_submit" onclick="adminAddHoliday()">Add holiday</button>
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0">
       <label>Awaiting approval (${pending.length})</label>
       ${pending.length?pending.map(h=>holRow(h,true)).join(''):'<div class="muted" style="font-size:13px">Nothing waiting.</div>'}
       <label style="margin-top:14px">Team balances (this year)</label>
@@ -766,10 +777,21 @@ async function decideHoliday(id,status){
   try{ const r=await fetch('/api/holidays/'+id+'/decision',{method:'POST',headers:JHEAD(),body:JSON.stringify({status})}); const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays(); }
   catch(e){ msg('hol_msg',e.message,'err'); }
 }
-async function cancelHoliday(id){
-  if(!confirm('Cancel this holiday request?'))return;
+async function removeHoliday(id,admin){
+  if(!confirm(admin?'Remove this holiday entry?':'Cancel this holiday request?'))return;
   try{ const r=await fetch('/api/holidays/'+id,{method:'DELETE',headers:HEAD()}); const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays(); }
   catch(e){ msg('hol_msg',e.message,'err'); }
+}
+function ahPreview(){ const s=$('ah_start').value,e=$('ah_end').value; if(s&&e){ $('ah_days').value=workingDaysJS(s,e); } }
+async function adminAddHoliday(){
+  const email=$('ah_person').value, start=$('ah_start').value, end=$('ah_end').value, days=$('ah_days').value, notes=$('ah_notes').value.trim();
+  if(!email){ msg('hol_msg','Choose a person.','err'); return; }
+  if(!start||!end){ msg('hol_msg','Pick the dates the holiday was taken.','err'); return; }
+  $('ah_submit').disabled=true; msg('hol_msg','Adding…','');
+  try{
+    const r=await fetch('/api/holidays',{method:'POST',headers:JHEAD(),body:JSON.stringify({email,start,end,days,notes,status:'approved'})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays();
+  }catch(e){ msg('hol_msg',e.message,'err'); $('ah_submit').disabled=false; }
 }
 function closeHol(){ $('holSheet').classList.remove('open'); }
 $('holSheet').addEventListener('click',e=>{if(e.target===$('holSheet'))closeHol();});
