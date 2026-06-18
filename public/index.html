@@ -185,7 +185,7 @@
 <div class="sheet" id="usersSheet"><div class="sheet-inner" id="usersInner"></div></div>
 <div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
 <datalist id="contractorList"></datalist>
-<input type="file" id="fileInput" accept="image/*" multiple capture="environment">
+<input type="file" id="fileInput" accept="image/*" multiple>
 <input type="file" id="invoiceInput" accept=".pdf,image/*" multiple>
 
 <script>
@@ -537,6 +537,7 @@ function renderDetail(j){
     ${(j.status||'').toLowerCase()==='done'
       ? `<div class="chip" style="margin-top:14px;background:#eafaf0;border-color:#b6e6c8;color:#1f8b4c">✅ Marked complete</div>`
       : `<button class="btn" style="background:#00c875" onclick="markComplete('${j.id}','${j.boardId}')">✅ Mark complete</button>`}
+    ${isAdmin && j.visit ? `<button class="btn ghost" onclick="unscheduleJob('${j.id}','${j.boardId}')">Remove from calendar</button>` : ''}
     <button class="btn ghost" onclick="closeSheet()">Close</button>
     <div class="msg" id="d_msg"></div>`;
   $('addPhoto').onclick=()=>{photoTarget={id:j.id,boardId:j.boardId};$('fileInput').value='';$('fileInput').click();};
@@ -551,6 +552,17 @@ async function addNote(id,boardId){
     const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
     const r2=await fetch('/api/jobs/'+id+'?board='+boardId,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
   }catch(e){ msg('d_msg',e.message,'err'); inp.disabled=false; }
+}
+async function unscheduleJob(id,boardId){
+  if(!confirm('Remove this job from the calendar? This clears the scheduled visit and moves it back to Outstanding Calls. (The job itself is kept.)'))return;
+  msg('d_msg','Removing…','');
+  try{
+    const r=await fetch('/api/jobs/'+id+'/unschedule',{method:'POST',headers:JHEAD(),body:JSON.stringify({boardId})});
+    const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
+    msg('d_msg','Removed from calendar ✓','ok');
+    await loadJobs();
+    const r2=await fetch('/api/jobs/'+id+'?board='+boardId,{headers:HEAD()}); if(r2.ok)renderDetail(await r2.json());
+  }catch(e){ msg('d_msg',e.message,'err'); }
 }
 async function markComplete(id,boardId){
   if(!confirm('Mark this job as complete? (Sets Works Status to "Done" on Monday.)'))return;

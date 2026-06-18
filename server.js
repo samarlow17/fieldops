@@ -77,7 +77,7 @@ const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm4
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'Southend78781',
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
   name: 'Sam'
 };
 
@@ -375,10 +375,10 @@ app.get('/api/jobs/:id', requireAuth, async (req,res)=>{
   }catch(e){ res.status(500).json({error:e.message}); }
 });
 
-// find the "Visit Booked" group id on a board (ids differ per board)
-async function visitBookedGroupId(board){
+// find a group id by title on a board (group ids differ per board)
+async function groupIdByTitle(board, title){
   const d = await gql(`query($b:[ID!]){ boards(ids:$b){ groups{ id title } } }`, { b:[board.id] });
-  const g = (d.boards[0].groups||[]).find(x=>x.title==='Visit Booked');
+  const g = (d.boards[0].groups||[]).find(x=>x.title===title);
   return g ? g.id : null;
 }
 
@@ -397,9 +397,21 @@ app.post('/api/jobs/:id/assign', requireAuth, requireAdmin, async (req,res)=>{
       { b:board.id, i:req.params.id, v:JSON.stringify(vals) });
     // scheduling a visit moves the job into the "Visit Booked" group on Monday
     if(date){
-      const gid = await visitBookedGroupId(board);
+      const gid = await groupIdByTitle(board, 'Visit Booked');
       if(gid) await gql(`mutation($i:ID!,$g:String!){ move_item_to_group(item_id:$i, group_id:$g){ id } }`, { i:req.params.id, g:gid });
     }
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+// admin: remove a job from the calendar (clear the scheduled visit, move back to Outstanding Calls)
+app.post('/api/jobs/:id/unschedule', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const board = BOARDS.find(b=>b.id===String(req.body.boardId)) || BOARDS[0];
+    await gql(`mutation($b:ID!,$i:ID!){ change_simple_column_values(board_id:$b,item_id:$i,column_id:"${COL.visit}",value:""){ id } }`,
+      { b:board.id, i:req.params.id });
+    const gid = await groupIdByTitle(board, 'Outstanding Calls');
+    if(gid) await gql(`mutation($i:ID!,$g:String!){ move_item_to_group(item_id:$i, group_id:$g){ id } }`, { i:req.params.id, g:gid });
     res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });
