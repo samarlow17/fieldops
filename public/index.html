@@ -138,6 +138,7 @@
   .urow .uemail{font-size:12px;color:var(--muted)}
   .urow select,.urow .ucon{width:auto;padding:9px}
   .urow .ucon{flex:1;min-width:120px}
+  .urow .uallow{width:64px;padding:9px}
   .urow .usave{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 14px;font-weight:600;cursor:pointer}
   .urow .usave:disabled{opacity:.5}
   .urow .ureset{background:#fff;color:var(--muted);border:1px solid var(--line2);border-radius:8px;padding:10px 12px;font-weight:600;cursor:pointer;font-size:13px}
@@ -184,6 +185,7 @@
     </div>
     <button class="viewbtn" id="viewToggle">📅 Calendar view</button>
     <button class="viewbtn hide" id="usersBtn" onclick="openUsers()">👤 Users<span id="pendBadge" class="badge-dot hide">0</span></button>
+    <button class="viewbtn hide" id="holBtn" onclick="openHolidays()">🏖️ Holidays</button>
     <input class="search" id="search" placeholder="Search jobs, address, contractor…">
     <button class="link" id="refresh">↻ Refresh</button>
   </div>
@@ -192,6 +194,7 @@
 
 <div class="sheet" id="detailSheet"><div class="sheet-inner" id="detailInner"></div></div>
 <div class="sheet" id="usersSheet"><div class="sheet-inner" id="usersInner"></div></div>
+<div class="sheet" id="holSheet"><div class="sheet-inner" id="holInner"></div></div>
 <div class="lightbox" id="lightbox"><img id="lightImg" src="" alt=""></div>
 <datalist id="contractorList"></datalist>
 <input type="file" id="fileInput" accept="image/*" multiple>
@@ -240,7 +243,7 @@ async function login(){
     if(r.status===401){msg('loginMsg','Wrong email or password.','err');return;}
     if(!r.ok){msg('loginMsg',d.error||'Could not sign in.','err');return;}
     if(d.approved===false){msg('loginMsg','Your account is waiting for an admin to approve it.','ok');return;}
-    token=d.token; me={role:d.role,name:d.name,email:d.email,contractorLabel:d.contractorLabel};
+    token=d.token; me={role:d.role,name:d.name,email:d.email,contractorLabel:d.contractorLabel,allowance:d.allowance||0};
     store.set('fo_token',token); store.set('fo_me',JSON.stringify(me));
     startApp();
   }catch(e){msg('loginMsg','Connection problem — the server may be waking up, try again in a moment.','err');$('loginBtn').disabled=false;}
@@ -271,6 +274,7 @@ function startApp(){
   $('search').oninput=render;
   $('refresh').onclick=loadJobs;
   $('usersBtn').classList.toggle('hide', me.role!=='admin');
+  $('holBtn').classList.toggle('hide', !(me.role==='admin' || Number(me.allowance)>0));
   if(me.role==='admin'){ loadContractors(); updatePendingBadge(); }
   loadJobs();
 }
@@ -659,12 +663,13 @@ function renderUsers(users){
         <option value="admin" ${u.role==='admin'?'selected':''}>Admin</option>
       </select>
       <input class="ucon" list="contractorList" placeholder="Contractor name" value="${esc(u.contractor||'')}">
+      <input class="uallow" type="number" min="0" placeholder="Hols" title="Holiday allowance (days). Set >0 to make them an employee." value="${u.allowance||''}">
       <button class="usave" onclick="saveUser('${u.id}',this)">Save</button>
       <button class="ureset" onclick="resetPw('${u.id}')">Reset password</button>
     </div>`;
   $('usersInner').innerHTML=`
     <h2>Users</h2>
-    <p style="color:var(--muted);font-size:13px;margin:2px 0 12px">To approve a sign-up: set them to <b>Operative</b> and type the <b>Contractor</b> name they cover (must match the boards exactly). They'll then see only that contractor's jobs and calendar.</p>
+    <p style="color:var(--muted);font-size:13px;margin:2px 0 12px">To approve a sign-up: set them to <b>Operative</b> and type the <b>Contractor</b> name they cover (must match the boards exactly). They'll then see only that contractor's jobs and calendar. Set <b>Hols</b> (a number of days) to make someone an employee with a holiday allowance — they'll then get the Holidays section.</p>
     ${pending.length?`<label>Waiting for approval (${pending.length})</label>${pending.map(row).join('')}`:'<div class="muted" style="font-size:13px;margin-bottom:6px">No one waiting for approval.</div>'}
     <label style="margin-top:14px">All accounts</label>
     ${active.length?active.map(row).join(''):'<div class="muted" style="font-size:14px">No approved accounts yet.</div>'}
@@ -675,9 +680,10 @@ async function saveUser(id,btn){
   const rowEl=btn.closest('.urow');
   const role=rowEl.querySelector('.urole').value;
   const contractor=rowEl.querySelector('.ucon').value.trim();
+  const allowance=rowEl.querySelector('.uallow').value;
   btn.disabled=true; msg('usersMsg','Saving…','');
   try{
-    const r=await fetch('/api/users/'+id,{method:'POST',headers:JHEAD(),body:JSON.stringify({role,contractor})});
+    const r=await fetch('/api/users/'+id,{method:'POST',headers:JHEAD(),body:JSON.stringify({role,contractor,allowance})});
     const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed');
     msg('usersMsg','Saved ✓','ok'); updatePendingBadge();
   }catch(e){ msg('usersMsg',e.message,'err'); }
@@ -694,6 +700,79 @@ async function resetPw(id){
   }catch(e){ msg('usersMsg',e.message,'err'); }
 }
 function closeUsers(){ $('usersSheet').classList.remove('open'); }
+
+/* ---- holidays ---- */
+function workingDaysJS(s,e){ if(!s||!e)return 0; const a=new Date(s+'T00:00:00'),b=new Date(e+'T00:00:00'); if(b<a)return 0; let n=0,d=new Date(a); while(d<=b){const w=d.getDay(); if(w!==0&&w!==6)n++; d.setDate(d.getDate()+1);} return n; }
+async function openHolidays(){
+  $('holInner').innerHTML='<div class="loading"><span class="spin"></span> Loading…</div>';
+  $('holSheet').classList.add('open');
+  try{ const r=await fetch('/api/holidays',{headers:HEAD()}); const d=r.ok?await r.json():{}; renderHolidays(d); }
+  catch(e){ $('holInner').innerHTML='<div class="empty">Could not load.</div>'; }
+}
+function holRow(h, admin){
+  const col={approved:'#2ecc71',declined:'#e2445c',pending:'#f5a623'}[h.status.toLowerCase()]||'#999';
+  const lc=h.status.toLowerCase();
+  return `<div class="urow" style="flex-wrap:wrap">
+    <div class="uinfo"><div class="uname">${admin?esc(h.name)+' · ':''}${esc(h.start)} → ${esc(h.end)}</div>
+      <div class="uemail">${h.days} day(s)${h.notes?(' · '+esc(h.notes)):''}</div></div>
+    <span class="pill" style="background:${col};min-width:74px">${esc(h.status)}</span>
+    ${admin && lc==='pending'
+      ? `<button class="usave" style="background:#2ecc71" onclick="decideHoliday('${h.id}','approved')">Approve</button><button class="ureset" onclick="decideHoliday('${h.id}','declined')">Decline</button>`
+      : (lc==='pending' && !admin ? `<button class="ureset" onclick="cancelHoliday('${h.id}')">Cancel</button>` : '')}
+  </div>`;
+}
+function renderHolidays(d){
+  if(d.role==='admin'){
+    const pending=(d.requests||[]).filter(h=>h.status.toLowerCase()==='pending');
+    const others=(d.requests||[]).filter(h=>h.status.toLowerCase()!=='pending');
+    $('holInner').innerHTML=`
+      <h2>Holidays</h2>
+      <label>Awaiting approval (${pending.length})</label>
+      ${pending.length?pending.map(h=>holRow(h,true)).join(''):'<div class="muted" style="font-size:13px">Nothing waiting.</div>'}
+      <label style="margin-top:14px">Team balances (this year)</label>
+      ${(d.people||[]).length?d.people.map(p=>`<div class="urow"><div class="uinfo"><div class="uname">${esc(p.name)}</div><div class="uemail">${esc(p.email)}</div></div><span class="chip"><b>${p.remaining}</b> left</span><span class="chip">${p.used}/${p.allowance} used</span></div>`).join(''):'<div class="muted" style="font-size:13px">No one has an allowance yet — set one in the Users screen.</div>'}
+      <label style="margin-top:14px">All requests</label>
+      ${others.length?others.map(h=>holRow(h,true)).join(''):'<div class="muted" style="font-size:13px">None.</div>'}
+      <button class="btn ghost" onclick="closeHol()">Close</button>
+      <div class="msg" id="hol_msg"></div>`;
+  } else {
+    $('holInner').innerHTML=`
+      <h2>My holidays</h2>
+      <div class="detail-meta">
+        <span class="chip">Allowance <b>${d.allowance}</b></span>
+        <span class="chip">Taken <b>${d.used}</b></span>
+        <span class="chip">Remaining <b>${d.remaining}</b></span>
+      </div>
+      <label>Request holiday</label>
+      <div class="row2"><div><label>From</label><input id="h_start" type="date" oninput="holPreview()"></div><div><label>To</label><input id="h_end" type="date" oninput="holPreview()"></div></div>
+      <input id="h_notes" placeholder="Notes (optional)" style="margin-top:8px">
+      <div id="h_preview" class="muted" style="font-size:13px;margin-top:6px"></div>
+      <button class="btn" id="h_submit" onclick="submitHoliday()">Submit request</button>
+      <label style="margin-top:16px">My requests</label>
+      ${(d.requests||[]).length?d.requests.map(h=>holRow(h,false)).join(''):'<div class="muted" style="font-size:13px">No requests yet.</div>'}
+      <button class="btn ghost" onclick="closeHol()">Close</button>
+      <div class="msg" id="hol_msg"></div>`;
+  }
+}
+function holPreview(){ const s=$('h_start').value,e=$('h_end').value; $('h_preview').textContent=(s&&e)?(workingDaysJS(s,e)+' working day(s)'):''; }
+async function submitHoliday(){
+  const start=$('h_start').value,end=$('h_end').value,notes=$('h_notes').value.trim();
+  if(!start||!end){msg('hol_msg','Pick a start and end date.','err');return;}
+  $('h_submit').disabled=true; msg('hol_msg','Submitting…','');
+  try{ const r=await fetch('/api/holidays',{method:'POST',headers:JHEAD(),body:JSON.stringify({start,end,notes})}); const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays(); }
+  catch(e){ msg('hol_msg',e.message,'err'); $('h_submit').disabled=false; }
+}
+async function decideHoliday(id,status){
+  try{ const r=await fetch('/api/holidays/'+id+'/decision',{method:'POST',headers:JHEAD(),body:JSON.stringify({status})}); const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays(); }
+  catch(e){ msg('hol_msg',e.message,'err'); }
+}
+async function cancelHoliday(id){
+  if(!confirm('Cancel this holiday request?'))return;
+  try{ const r=await fetch('/api/holidays/'+id,{method:'DELETE',headers:HEAD()}); const d=await r.json(); if(!r.ok)throw new Error(d.error||'Failed'); openHolidays(); }
+  catch(e){ msg('hol_msg',e.message,'err'); }
+}
+function closeHol(){ $('holSheet').classList.remove('open'); }
+$('holSheet').addEventListener('click',e=>{if(e.target===$('holSheet'))closeHol();});
 $('usersSheet').addEventListener('click',e=>{if(e.target===$('usersSheet'))closeUsers();});
 </script>
 </body>

@@ -68,16 +68,27 @@ function mondayToLocal(dateStr, timeStr){
 
 /* ---------- accounts (stored in the private FieldOps Users board) ---------- */
 const USER_BOARD_ID = process.env.USER_BOARD_ID || '5098399575';
-const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm', contractor:'text_mm477f06' };
+const UCOL = { email:'text_mm47hs8v', pass:'text_mm47skq7', role:'text_mm475fdm', contractor:'text_mm477f06', allowance:'numeric_mm4e96n0' };
 // manual calendar entries (things not on the maintenance boards)
 const EVENT_BOARD_ID = process.env.EVENT_BOARD_ID || '5098400789';
 const ECOL = { when:'date_mm47bbpy', contractor:'text_mm47yx6m', notes:'text_mm47j8dy' };
+// holiday / annual-leave requests
+const HOLIDAY_BOARD_ID = process.env.HOLIDAY_BOARD_ID || '5098814403';
+const HCOL = { email:'text_mm4ep9dh', start:'date_mm4e6xcj', end:'date_mm4eg3wy', days:'numeric_mm4eydmd', status:'text_mm4eb98z', notes:'text_mm4ey39z' };
+// count working days (Mon–Fri) inclusive between two YYYY-MM-DD dates
+function workingDays(startStr, endStr){
+  const s=new Date(startStr+'T00:00:00Z'), e=new Date(endStr+'T00:00:00Z');
+  if(isNaN(s)||isNaN(e)||e<s) return 0;
+  let n=0; const d=new Date(s);
+  while(d<=e){ const wd=d.getUTCDay(); if(wd!==0&&wd!==6) n++; d.setUTCDate(d.getUTCDate()+1); }
+  return n;
+}
 
 // A built-in admin that always works, so you can log in and approve people.
 // Change these by setting ADMIN_EMAIL / ADMIN_PASSWORD, or edit here.
 const BOOTSTRAP_ADMIN = {
   email: (process.env.ADMIN_EMAIL || 'sam@titerra.com').toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'Southend78781',
+  password: process.env.ADMIN_PASSWORD || 'titerra-admin-4821',
   name: 'Sam'
 };
 
@@ -119,12 +130,13 @@ async function gql(query, variables){
 /* ---------- account helpers (read/write the Users board) ---------- */
 async function getBoardUsers(){
   const d = await gql(
-    `query($b:[ID!]){ boards(ids:$b){ items_page(limit:300){ items{ id name column_values(ids:["${UCOL.email}","${UCOL.pass}","${UCOL.role}","${UCOL.contractor}"]){ id text } } } } }`,
+    `query($b:[ID!]){ boards(ids:$b){ items_page(limit:300){ items{ id name column_values(ids:["${UCOL.email}","${UCOL.pass}","${UCOL.role}","${UCOL.contractor}","${UCOL.allowance}"]){ id text } } } } }`,
     { b:[USER_BOARD_ID] });
   return (d.boards[0].items_page.items||[]).map(it=>{
     const c={}; it.column_values.forEach(x=>c[x.id]=x.text||'');
     return { id:it.id, name:it.name, email:norm(c[UCOL.email]), hash:c[UCOL.pass]||'',
-             role:(c[UCOL.role]||'pending').trim().toLowerCase(), contractor:c[UCOL.contractor]||'' };
+             role:(c[UCOL.role]||'pending').trim().toLowerCase(), contractor:c[UCOL.contractor]||'',
+             allowance:Number(c[UCOL.allowance]||0) };
   });
 }
 async function createBoardUser(name,email,hash){
@@ -137,6 +149,7 @@ async function updateBoardUser(id,fields){
   if(fields.role!==undefined)       vals[UCOL.role]=fields.role;
   if(fields.contractor!==undefined) vals[UCOL.contractor]=fields.contractor;
   if(fields.passHash!==undefined)   vals[UCOL.pass]=fields.passHash;
+  if(fields.allowance!==undefined)  vals[UCOL.allowance]=Number(fields.allowance)||0;
   await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
     { b:USER_BOARD_ID, i:id, v:JSON.stringify(vals) });
 }
@@ -235,7 +248,7 @@ app.post('/api/login', async (req,res)=>{
     if(!u || !u.hash || !bcrypt.compareSync(String(password), u.hash))
       return res.status(401).json({error:'Wrong email or password'});
     if((u.role||'pending')==='pending') return res.json({ approved:false, name:u.name });
-    const me = { role:u.role, name:u.name, email:e, contractorLabel:u.contractor, exp:Date.now()+7*DAY };
+    const me = { role:u.role, name:u.name, email:e, contractorLabel:u.contractor, allowance:u.allowance||0, exp:Date.now()+7*DAY };
     res.json({ ...me, approved:true, token:signToken(me) });
   }catch(err){ res.status(500).json({error:err.message}); }
 });
@@ -244,17 +257,18 @@ app.post('/api/login', async (req,res)=>{
 app.get('/api/users', requireAuth, requireAdmin, async (req,res)=>{
   try{
     const users = await getBoardUsers();
-    res.json(users.map(u=>({ id:u.id, name:u.name, email:u.email, role:u.role, contractor:u.contractor })));
+    res.json(users.map(u=>({ id:u.id, name:u.name, email:u.email, role:u.role, contractor:u.contractor, allowance:u.allowance })));
   }catch(err){ res.status(500).json({error:err.message}); }
 });
-// admin: approve / set role + contractor
+// admin: approve / set role + contractor + holiday allowance
 app.post('/api/users/:id', requireAuth, requireAdmin, async (req,res)=>{
   try{
-    const { role, contractor } = req.body || {};
+    const { role, contractor, allowance } = req.body || {};
     const allowed = ['pending','operative','admin'];
     const fields = {};
     if(role!==undefined){ if(!allowed.includes(role)) return res.status(400).json({error:'Bad role'}); fields.role=role; }
     if(contractor!==undefined) fields.contractor=String(contractor);
+    if(allowance!==undefined) fields.allowance=allowance;
     await updateBoardUser(req.params.id, fields);
     res.json({ ok:true });
   }catch(err){ res.status(500).json({error:err.message}); }
@@ -280,6 +294,71 @@ app.post('/api/me/password', requireAuth, async (req,res)=>{
     if(!u) return res.status(404).json({error:'Account not found'});
     if(!u.hash || !bcrypt.compareSync(String(currentPassword||''), u.hash)) return res.status(401).json({error:'Your current password is wrong'});
     await updateBoardUser(u.id, { passHash: bcrypt.hashSync(String(newPassword),10) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+/* ---------- holidays ---------- */
+async function getHolidays(){
+  const d = await gql(
+    `query($b:[ID!]){ boards(ids:$b){ items_page(limit:500){ items{ id name column_values(ids:["${HCOL.email}","${HCOL.start}","${HCOL.end}","${HCOL.days}","${HCOL.status}","${HCOL.notes}"]){ id text value } } } } }`,
+    { b:[HOLIDAY_BOARD_ID] });
+  const dval = v => { try{ const o=JSON.parse(v||'null'); return o&&o.date?o.date:''; }catch(e){ return ''; } };
+  return (d.boards[0].items_page.items||[]).map(it=>{
+    const c={}; it.column_values.forEach(x=>c[x.id]=x);
+    return { id:it.id, name:it.name, email:norm(c[HCOL.email]?.text),
+      start:dval(c[HCOL.start]?.value), end:dval(c[HCOL.end]?.value),
+      days:Number(c[HCOL.days]?.text||0), status:(c[HCOL.status]?.text||'Pending'), notes:c[HCOL.notes]?.text||'' };
+  });
+}
+app.get('/api/holidays', requireAuth, async (req,res)=>{
+  try{
+    const all = await getHolidays();
+    const yr = String(new Date().getFullYear());
+    const usedFor = email => all.filter(h=>h.email===norm(email) && h.status.toLowerCase()==='approved' && (h.start||'').startsWith(yr))
+                                .reduce((n,h)=>n+(h.days||0),0);
+    if(req.me.role==='admin'){
+      const users = await getBoardUsers();
+      const people = users.filter(u=>Number(u.allowance)>0).map(u=>{
+        const used=usedFor(u.email); return { id:u.id, name:u.name, email:u.email, allowance:u.allowance, used, remaining:u.allowance-used };
+      });
+      return res.json({ role:'admin', requests: all.sort((a,b)=>(b.start||'').localeCompare(a.start||'')), people });
+    }
+    const mine = all.filter(h=>h.email===norm(req.me.email)).sort((a,b)=>(b.start||'').localeCompare(a.start||''));
+    const allowance = Number(req.me.allowance||0), used = usedFor(req.me.email);
+    res.json({ role:'employee', allowance, used, remaining:allowance-used, requests:mine });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/holidays', requireAuth, async (req,res)=>{
+  try{
+    const { start, end, notes } = req.body || {};
+    if(!start || !end) return res.status(400).json({error:'Start and end dates are required'});
+    const days = workingDays(start, end);
+    if(days < 1) return res.status(400).json({error:'That range has no working days'});
+    const vals = { [HCOL.email]:req.me.email, [HCOL.start]:{date:start}, [HCOL.end]:{date:end}, [HCOL.days]:days, [HCOL.status]:'Pending', [HCOL.notes]:notes||'' };
+    await gql(`mutation($b:ID!,$n:String!,$v:JSON!){ create_item(board_id:$b,item_name:$n,column_values:$v){ id } }`,
+      { b:HOLIDAY_BOARD_ID, n:(req.me.name||req.me.email), v:JSON.stringify(vals) });
+    res.json({ ok:true, days });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.post('/api/holidays/:id/decision', requireAuth, requireAdmin, async (req,res)=>{
+  try{
+    const map = { approved:'Approved', declined:'Declined', pending:'Pending' };
+    const s = map[String(req.body.status||'').toLowerCase()];
+    if(!s) return res.status(400).json({error:'Bad status'});
+    await gql(`mutation($b:ID!,$i:ID!,$v:JSON!){ change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){ id } }`,
+      { b:HOLIDAY_BOARD_ID, i:req.params.id, v:JSON.stringify({ [HCOL.status]:s }) });
+    res.json({ ok:true });
+  }catch(e){ res.status(500).json({error:e.message}); }
+});
+app.delete('/api/holidays/:id', requireAuth, async (req,res)=>{
+  try{
+    if(req.me.role!=='admin'){
+      const all = await getHolidays(); const h = all.find(x=>x.id===String(req.params.id));
+      if(!h || h.email!==norm(req.me.email)) return res.status(403).json({error:'Not your request'});
+      if(h.status.toLowerCase()!=='pending') return res.status(400).json({error:'Only pending requests can be cancelled'});
+    }
+    await gql(`mutation($i:ID!){ delete_item(item_id:$i){ id } }`, { i:req.params.id });
     res.json({ ok:true });
   }catch(e){ res.status(500).json({error:e.message}); }
 });
